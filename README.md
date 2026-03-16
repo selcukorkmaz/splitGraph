@@ -90,17 +90,11 @@ The package is intentionally strict in a few important places:
 
 ## Installation
 
-From a local checkout:
+Development version from GitHub:
 
 ```r
-R CMD build splitGraph
-R CMD INSTALL splitGraph_0.1.0.tar.gz
-```
-
-From an R session with `devtools`:
-
-```r
-devtools::install("splitGraph")
+install.packages("remotes")
+remotes::install_github("selcukorkmaz/splitGraph")
 ```
 
 ## Core Concepts
