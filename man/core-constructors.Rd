@@ -27,7 +27,7 @@ graph_query_result(query = "", params = list(), nodes = NULL, edges = NULL, tabl
 
 dependency_constraint(constraint_id, relation_types, sample_map, transitive = TRUE, metadata = list())
 
-split_constraint(strategy, sample_map, recommended_bioleak_args = list(), metadata = list())
+split_constraint(strategy, sample_map, recommended_downstream_args = list(), metadata = list())
 
 leakage_constraint(issue_type, severity, affected_samples, evidence = NULL, recommendation = "", metadata = list())
 }
@@ -37,7 +37,7 @@ leakage_constraint(issue_type, severity, affected_samples, evidence = NULL, reco
   \item{source}{Optional source metadata.}
   \item{nodes, edges}{A \code{graph_node_set} and \code{graph_edge_set}.}
   \item{graph}{An internal \code{igraph} object.}
-  \item{metadata, caches, params, recommended_bioleak_args}{Named lists with auxiliary metadata.}
+  \item{metadata, caches, params, recommended_downstream_args}{Named lists with auxiliary metadata.}
   \item{query}{Query label stored on a \code{graph_query_result}.}
   \item{table}{Tabular query result payload.}
   \item{constraint_id, relation_types, transitive}{Fields describing a dependency constraint.}
@@ -50,4 +50,26 @@ An S3 object corresponding to the constructor that was called.
 }
 \description{
 Low-level constructors for the core S3 classes used throughout \pkg{splitGraph}.
+}
+\examples{
+meta <- data.frame(
+  sample_id = c("S1", "S2"),
+  subject_id = c("P1", "P2")
+)
+
+samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
+subjects <- create_nodes(meta, type = "Subject", id_col = "subject_id")
+edges <- create_edges(
+  meta,
+  from_col = "sample_id",
+  to_col = "subject_id",
+  from_type = "Sample",
+  to_type = "Subject",
+  relation = "sample_belongs_to_subject"
+)
+
+nodes_set <- graph_node_set(rbind(samples$data, subjects$data))
+edges_set <- graph_edge_set(edges$data)
+nodes_set
+edges_set
 }

@@ -1,6 +1,8 @@
-# Integration helpers for translating splitGraph constraints into bioLeak-ready specifications.
+# Helpers for translating splitGraph constraints into stable, tool-agnostic
+# sample-level split specifications. Downstream packages (bioLeak, fastml,
+# rsample, ...) consume `split_spec` objects through their own adapters.
 
-.bioleak_sample_data_template <- function(n = 0L) {
+.split_spec_sample_data_template <- function(n = 0L) {
   data.frame(
     sample_id = rep(NA_character_, n),
     sample_node_id = rep(NA_character_, n),
@@ -15,7 +17,7 @@
   )
 }
 
-.bioleak_new_issue <- function(severity, code, message, n_affected = 0L, details = list()) {
+.split_spec_new_issue <- function(severity, code, message, n_affected = 0L, details = list()) {
   data.frame(
     issue_id = NA_character_,
     severity = as.character(severity)[1L],
@@ -27,7 +29,7 @@
   )
 }
 
-.bioleak_bind_issues <- function(issues) {
+.split_spec_bind_issues <- function(issues) {
   issues <- Filter(Negate(is.null), issues)
   if (length(issues) == 0L) {
     return(data.frame(
@@ -43,11 +45,11 @@
 
   out <- do.call(rbind, issues)
   row.names(out) <- NULL
-  out$issue_id <- paste0("bioleak_issue_", seq_len(nrow(out)))
+  out$issue_id <- paste0("split_spec_issue_", seq_len(nrow(out)))
   out
 }
 
-.bioleak_resampling_hint <- function(mode, strategy = NULL) {
+.split_spec_resampling_hint <- function(mode, strategy = NULL) {
   mode <- tolower(as.character(mode)[1L])
   strategy <- if (is.null(strategy)) NULL else tolower(as.character(strategy)[1L])
 
@@ -60,12 +62,12 @@
   "grouped_cv"
 }
 
-.bioleak_match_assignment_key <- function(assignments, sample_node_ids) {
+.split_spec_match_assignment_key <- function(assignments, sample_node_ids) {
   matched <- assignments[match(sample_node_ids, assignments$sample_node_id), , drop = FALSE]
   matched$linked_key
 }
 
-.bioleak_enrich_from_graph <- function(sample_data, graph) {
+.split_spec_enrich_from_graph <- function(sample_data, graph) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   sample_ids <- sample_data$sample_node_id
 
@@ -75,10 +77,10 @@
   time_constraint <- time_constraint[match(sample_ids, time_constraint$sample_node_id), , drop = FALSE]
 
   missing_batch <- is.na(sample_data$batch_group) | !nzchar(sample_data$batch_group)
-  sample_data$batch_group[missing_batch] <- .bioleak_match_assignment_key(batch_assignments, sample_ids)[missing_batch]
+  sample_data$batch_group[missing_batch] <- .split_spec_match_assignment_key(batch_assignments, sample_ids)[missing_batch]
 
   missing_study <- is.na(sample_data$study_group) | !nzchar(sample_data$study_group)
-  sample_data$study_group[missing_study] <- .bioleak_match_assignment_key(study_assignments, sample_ids)[missing_study]
+  sample_data$study_group[missing_study] <- .split_spec_match_assignment_key(study_assignments, sample_ids)[missing_study]
 
   missing_timepoint <- is.na(sample_data$timepoint_id) | !nzchar(sample_data$timepoint_id)
   sample_data$timepoint_id[missing_timepoint] <- time_constraint$timepoint_id[missing_timepoint]
@@ -92,7 +94,7 @@
   sample_data
 }
 
-.bioleak_constraint_summary <- function(constraint) {
+.split_spec_constraint_summary <- function(constraint) {
   if (is.null(constraint)) {
     return(list())
   }
@@ -109,11 +111,11 @@
   )
 }
 
-as_bioleak_split_spec <- function(constraint, graph = NULL) {
+as_split_spec <- function(constraint, graph = NULL) {
   .depgraph_assert(inherits(constraint, "split_constraint"), "`constraint` must be a `split_constraint`.")
 
   sample_map <- constraint$sample_map
-  sample_data <- .bioleak_sample_data_template(nrow(sample_map))
+  sample_data <- .split_spec_sample_data_template(nrow(sample_map))
   sample_data$sample_id <- as.character(sample_map$sample_id)
   sample_data$sample_node_id <- as.character(sample_map$sample_node_id)
   sample_data$group_id <- as.character(sample_map$group_id)
@@ -141,7 +143,7 @@ as_bioleak_split_spec <- function(constraint, graph = NULL) {
 
   enrichment_used <- FALSE
   if (!is.null(graph)) {
-    sample_data <- .bioleak_enrich_from_graph(sample_data, graph)
+    sample_data <- .split_spec_enrich_from_graph(sample_data, graph)
     enrichment_used <- TRUE
   }
 
@@ -154,9 +156,9 @@ as_bioleak_split_spec <- function(constraint, graph = NULL) {
   }
 
   time_var <- if (!all(is.na(sample_data$order_rank))) "order_rank" else NULL
-  ordering_required <- isTRUE(constraint$recommended_bioleak_args$ordering_required)
+  ordering_required <- isTRUE(constraint$recommended_downstream_args$ordering_required)
 
-  bioleak_split_spec(
+  split_spec(
     sample_data = sample_data,
     group_var = "group_id",
     block_vars = block_vars,
@@ -164,7 +166,7 @@ as_bioleak_split_spec <- function(constraint, graph = NULL) {
     ordering_required = ordering_required,
     constraint_mode = mode,
     constraint_strategy = strategy,
-    recommended_resampling = .bioleak_resampling_hint(mode, strategy),
+    recommended_resampling = .split_spec_resampling_hint(mode, strategy),
     metadata = list(
       graph_name = if (is.null(graph)) NULL else graph$metadata$graph_name,
       dataset_name = if (is.null(graph)) NULL else graph$metadata$dataset_name,
@@ -179,15 +181,15 @@ as_bioleak_split_spec <- function(constraint, graph = NULL) {
   )
 }
 
-validate_bioleak_split_spec <- function(x) {
-  .depgraph_assert(inherits(x, "bioleak_split_spec"), "`x` must be a `bioleak_split_spec`.")
+validate_split_spec <- function(x) {
+  .depgraph_assert(inherits(x, "split_spec"), "`x` must be a `split_spec`.")
   issues <- list()
   data <- x$sample_data
 
   required_cols <- c("sample_id", "sample_node_id", x$group_var)
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0L) {
-    issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+    issues[[length(issues) + 1L]] <- .split_spec_new_issue(
       severity = "error",
       code = "missing_required_columns",
       message = paste0("Split spec is missing required columns: ", paste(missing_cols, collapse = ", ")),
@@ -198,7 +200,7 @@ validate_bioleak_split_spec <- function(x) {
 
   if ("sample_id" %in% names(data)) {
     if (any(is.na(data$sample_id) | !nzchar(as.character(data$sample_id)))) {
-      issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
         severity = "error",
         code = "missing_sample_id",
         message = "Split spec contains missing `sample_id` values.",
@@ -208,7 +210,7 @@ validate_bioleak_split_spec <- function(x) {
 
     dup_sample_ids <- unique(data$sample_id[duplicated(data$sample_id)])
     if (length(dup_sample_ids) > 0L) {
-      issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
         severity = "error",
         code = "duplicate_sample_id",
         message = paste0("Split spec contains duplicated sample IDs: ", paste(dup_sample_ids, collapse = ", ")),
@@ -221,7 +223,7 @@ validate_bioleak_split_spec <- function(x) {
   if (x$group_var %in% names(data)) {
     group_values <- data[[x$group_var]]
     if (any(is.na(group_values) | !nzchar(as.character(group_values)))) {
-      issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
         severity = "error",
         code = "missing_group_id",
         message = paste0("Split spec contains missing values in `", x$group_var, "`."),
@@ -230,7 +232,7 @@ validate_bioleak_split_spec <- function(x) {
     } else {
       group_sizes <- table(group_values)
       if (length(group_sizes) > 0L && all(group_sizes == 1L)) {
-        issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+        issues[[length(issues) + 1L]] <- .split_spec_new_issue(
           severity = "advisory",
           code = "singleton_groups_only",
           message = "All split groups are singletons; grouping may provide little protection against structural leakage.",
@@ -239,7 +241,7 @@ validate_bioleak_split_spec <- function(x) {
       }
     }
   } else {
-    issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+    issues[[length(issues) + 1L]] <- .split_spec_new_issue(
       severity = "error",
       code = "invalid_group_var",
       message = paste0("Declared `group_var` is not present in `sample_data`: ", x$group_var)
@@ -248,13 +250,13 @@ validate_bioleak_split_spec <- function(x) {
 
   if (isTRUE(x$ordering_required)) {
     if (is.null(x$time_var) || !x$time_var %in% names(data)) {
-      issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
         severity = "error",
         code = "invalid_time_var",
         message = "Ordering is required but the declared `time_var` is missing from `sample_data`."
       )
     } else if (any(is.na(data[[x$time_var]]))) {
-      issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
         severity = "error",
         code = "missing_required_ordering",
         message = "Ordering is required but some samples are missing ordering values.",
@@ -266,13 +268,13 @@ validate_bioleak_split_spec <- function(x) {
   if (length(x$block_vars) > 0L) {
     for (block_var in x$block_vars) {
       if (!block_var %in% names(data)) {
-        issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+        issues[[length(issues) + 1L]] <- .split_spec_new_issue(
           severity = "error",
           code = "invalid_block_var",
           message = paste0("Declared block variable is not present in `sample_data`: ", block_var)
         )
       } else if (all(is.na(data[[block_var]]) | !nzchar(as.character(data[[block_var]])))) {
-        issues[[length(issues) + 1L]] <- .bioleak_new_issue(
+        issues[[length(issues) + 1L]] <- .split_spec_new_issue(
           severity = "warning",
           code = "empty_block_var",
           message = paste0("Block variable `", block_var, "` is present but empty for all samples.")
@@ -281,8 +283,8 @@ validate_bioleak_split_spec <- function(x) {
     }
   }
 
-  bioleak_split_spec_validation(
-    issues = .bioleak_bind_issues(issues),
+  split_spec_validation(
+    issues = .split_spec_bind_issues(issues),
     metadata = list(
       n_samples = nrow(data),
       n_groups = if (x$group_var %in% names(data)) length(unique(data[[x$group_var]])) else NA_integer_
@@ -384,13 +386,13 @@ validate_bioleak_split_spec <- function(x) {
     ))
   }
 
-  validation <- validate_bioleak_split_spec(split_spec)
+  validation <- validate_split_spec(split_spec)
   diagnostics <- list()
   if (nrow(validation$issues) == 0L) {
     diagnostics[[length(diagnostics) + 1L]] <- data.frame(
       severity = "advisory",
       category = "split_spec_ready",
-      message = "Split spec passed bioLeak preflight validation.",
+      message = "Split spec passed preflight validation.",
       source = "split_spec",
       n_affected = nrow(split_spec$sample_data),
       stringsAsFactors = FALSE
@@ -478,7 +480,7 @@ summarize_leakage_risks <- function(graph, constraint = NULL, split_spec = NULL,
     .depgraph_assert(inherits(constraint, "split_constraint"), "`constraint` must be a `split_constraint`.")
   }
   if (!is.null(split_spec)) {
-    .depgraph_assert(inherits(split_spec, "bioleak_split_spec"), "`split_spec` must be a `bioleak_split_spec`.")
+    .depgraph_assert(inherits(split_spec, "split_spec"), "`split_spec` must be a `split_spec`.")
   }
 
   validation <- validation %||% validate_graph(graph)
@@ -519,7 +521,7 @@ summarize_leakage_risks <- function(graph, constraint = NULL, split_spec = NULL,
     overview = overview,
     diagnostics = diagnostics,
     validation_summary = validation$summary,
-    constraint_summary = .bioleak_constraint_summary(constraint),
+    constraint_summary = .split_spec_constraint_summary(constraint),
     split_spec_summary = split_spec_info$summary,
     metadata = list(
       graph_name = graph$metadata$graph_name,

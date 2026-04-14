@@ -68,8 +68,136 @@ summary.dependency_graph <- function(object, ...) {
   )
 }
 
-plot.dependency_graph <- function(x, ...) {
-  graphics::plot(x$graph, ...)
+.depgraph_type_rows <- c(
+  Sample     = 0L,
+  Subject    = 1L,
+  Batch      = 1L,
+  Study      = 1L,
+  Timepoint  = 1L,
+  Assay      = 2L,
+  FeatureSet = 2L,
+  Outcome    = 3L
+)
+
+.depgraph_type_palette <- function() {
+  c(
+    Sample     = "#4C78A8",
+    Subject    = "#F58518",
+    Batch      = "#54A24B",
+    Study      = "#B279A2",
+    Timepoint  = "#E45756",
+    Assay      = "#72B7B2",
+    FeatureSet = "#EECA3B",
+    Outcome    = "#9D755D",
+    `_other_`  = "#B0B0B0"
+  )
+}
+
+.depgraph_typed_layout <- function(graph) {
+  node_types <- igraph::vertex_attr(graph, "node_type")
+  if (is.null(node_types)) {
+    node_types <- rep("Sample", igraph::vcount(graph))
+  }
+
+  rows <- .depgraph_type_rows[node_types]
+  rows[is.na(rows)] <- max(.depgraph_type_rows) + 1L
+
+  order_in_row <- stats::ave(seq_along(rows), rows, FUN = seq_along)
+  row_widths <- stats::ave(seq_along(rows), rows, FUN = length)
+
+  x <- ifelse(row_widths > 1L,
+              (order_in_row - 1L) / (row_widths - 1L) - 0.5,
+              0)
+  y <- -as.numeric(rows)
+
+  cbind(x, y)
+}
+
+.depgraph_node_colors <- function(graph, node_colors = NULL) {
+  palette <- .depgraph_type_palette()
+  if (!is.null(node_colors)) {
+    for (nm in names(node_colors)) palette[[nm]] <- node_colors[[nm]]
+  }
+  node_types <- igraph::vertex_attr(graph, "node_type")
+  if (is.null(node_types)) {
+    node_types <- rep("Sample", igraph::vcount(graph))
+  }
+  colors <- palette[node_types]
+  colors[is.na(colors)] <- palette[["_other_"]]
+  unname(colors)
+}
+
+plot.dependency_graph <- function(x,
+                                  layout = c("typed", "sugiyama", "auto"),
+                                  node_colors = NULL,
+                                  show_labels = TRUE,
+                                  legend = TRUE,
+                                  legend_position = "topleft",
+                                  ...) {
+  layout_choice <- if (is.character(layout)) match.arg(layout) else layout
+  g <- x$graph
+
+  user_args <- list(...)
+  plot_args <- list(x = g)
+
+  if (is.character(layout_choice)) {
+    if (identical(layout_choice, "typed")) {
+      plot_args$layout <- .depgraph_typed_layout(g)
+    } else if (identical(layout_choice, "sugiyama")) {
+      plot_args$layout <- igraph::layout_with_sugiyama(g)$layout
+    }
+  } else if (is.matrix(layout_choice)) {
+    plot_args$layout <- layout_choice
+  } else if (is.function(layout_choice)) {
+    plot_args$layout <- layout_choice(g)
+  }
+
+  if (is.null(user_args[["vertex.color"]])) {
+    plot_args$vertex.color <- .depgraph_node_colors(g, node_colors = node_colors)
+  }
+  if (is.null(user_args[["vertex.label"]])) {
+    plot_args$vertex.label <- if (isTRUE(show_labels)) {
+      lbl <- igraph::vertex_attr(g, "label")
+      if (is.null(lbl) || all(is.na(lbl) | !nzchar(lbl))) {
+        igraph::vertex_attr(g, "name")
+      } else {
+        ifelse(is.na(lbl) | !nzchar(lbl), igraph::vertex_attr(g, "name"), lbl)
+      }
+    } else {
+      NA
+    }
+  }
+  if (is.null(user_args[["vertex.label.cex"]])) plot_args$vertex.label.cex <- 0.7
+  if (is.null(user_args[["vertex.size"]]))       plot_args$vertex.size <- 14
+  if (is.null(user_args[["edge.arrow.size"]]))   plot_args$edge.arrow.size <- 0.4
+  if (is.null(user_args[["edge.color"]]))        plot_args$edge.color <- "#888888"
+
+  plot_args[names(user_args)] <- user_args
+
+  do.call(graphics::plot, plot_args)
+
+  if (isTRUE(legend)) {
+    palette <- .depgraph_type_palette()
+    if (!is.null(node_colors)) {
+      for (nm in names(node_colors)) palette[[nm]] <- node_colors[[nm]]
+    }
+    node_types <- igraph::vertex_attr(g, "node_type")
+    present <- intersect(names(palette), unique(node_types))
+    if (length(present) > 0L) {
+      graphics::legend(
+        legend_position,
+        legend = present,
+        pt.bg = unname(palette[present]),
+        pch = 21,
+        pt.cex = 1.4,
+        col = "#333333",
+        bty = "n",
+        cex = 0.75,
+        title = "Node type"
+      )
+    }
+  }
+
   invisible(x)
 }
 
@@ -191,8 +319,8 @@ as.data.frame.depgraph_validation_report <- function(x, row.names = NULL, option
   x$issues
 }
 
-print.bioleak_split_spec <- function(x, ...) {
-  cat("<bioleak_split_spec>", x$constraint_mode %||% "<unknown>", "\n")
+print.split_spec <- function(x, ...) {
+  cat("<split_spec>", x$constraint_mode %||% "<unknown>", "\n")
   cat("  Samples:", nrow(x$sample_data), "\n")
   cat("  Groups:", length(unique(x$sample_data[[x$group_var]])), "\n")
   if (!is.null(x$recommended_resampling)) {
@@ -201,7 +329,7 @@ print.bioleak_split_spec <- function(x, ...) {
   invisible(x)
 }
 
-summary.bioleak_split_spec <- function(object, ...) {
+summary.split_spec <- function(object, ...) {
   list(
     constraint_mode = object$constraint_mode,
     constraint_strategy = object$constraint_strategy,
@@ -214,22 +342,22 @@ summary.bioleak_split_spec <- function(object, ...) {
   )
 }
 
-as.data.frame.bioleak_split_spec <- function(x, row.names = NULL, optional = FALSE, ...) {
+as.data.frame.split_spec <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$sample_data
 }
 
-print.bioleak_split_spec_validation <- function(x, ...) {
-  cat("<bioleak_split_spec_validation>\n")
+print.split_spec_validation <- function(x, ...) {
+  cat("<split_spec_validation>\n")
   cat("  Valid:", x$valid, "\n")
   cat("  Issues:", nrow(x$issues), "\n")
   invisible(x)
 }
 
-summary.bioleak_split_spec_validation <- function(object, ...) {
+summary.split_spec_validation <- function(object, ...) {
   object$summary
 }
 
-as.data.frame.bioleak_split_spec_validation <- function(x, row.names = NULL, optional = FALSE, ...) {
+as.data.frame.split_spec_validation <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$issues
 }
 

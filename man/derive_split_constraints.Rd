@@ -72,3 +72,14 @@ Ambiguous direct assignments are rejected. A sample cannot be assigned to
 multiple batches, studies, or timepoints when deriving direct split
 constraints.
 }
+\examples{
+meta <- data.frame(
+  sample_id  = c("S1", "S2", "S3", "S4"),
+  subject_id = c("P1", "P1", "P2", "P2"),
+  batch_id   = c("B1", "B2", "B1", "B2")
+)
+g <- graph_from_metadata(meta)
+
+constraint <- derive_split_constraints(g, mode = "subject")
+grouping_vector(constraint)
+}

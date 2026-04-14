@@ -1,15 +1,15 @@
-\name{as_bioleak_split_spec}
-\alias{as_bioleak_split_spec}
-\alias{validate_bioleak_split_spec}
+\name{as_split_spec}
+\alias{as_split_spec}
+\alias{validate_split_spec}
 \alias{summarize_leakage_risks}
-\alias{bioleak_split_spec}
-\alias{bioleak_split_spec_validation}
+\alias{split_spec}
+\alias{split_spec_validation}
 \alias{leakage_risk_summary}
 \title{Translate splitGraph Constraints into Stable Split Specifications}
 \usage{
-as_bioleak_split_spec(constraint, graph = NULL)
+as_split_spec(constraint, graph = NULL)
 
-validate_bioleak_split_spec(x)
+validate_split_spec(x)
 
 summarize_leakage_risks(graph, constraint = NULL, split_spec = NULL,
   validation = NULL)
@@ -17,15 +17,14 @@ summarize_leakage_risks(graph, constraint = NULL, split_spec = NULL,
 \arguments{
   \item{constraint}{A \code{split_constraint}.}
   \item{graph}{A \code{dependency_graph}.}
-  \item{split_spec}{An optional \code{bioleak_split_spec}.}
+  \item{split_spec}{An optional \code{split_spec}.}
   \item{validation}{An optional \code{depgraph_validation_report}.}
-  \item{x}{A \code{bioleak_split_spec}.}
+  \item{x}{A \code{split_spec}.}
 }
 \value{
-\code{as_bioleak_split_spec()} returns a \code{bioleak_split_spec}.
-\code{validate_bioleak_split_spec()} returns a
-\code{bioleak_split_spec_validation}. \code{summarize_leakage_risks()}
-returns a \code{leakage_risk_summary}.
+\code{as_split_spec()} returns a \code{split_spec}.
+\code{validate_split_spec()} returns a \code{split_spec_validation}.
+\code{summarize_leakage_risks()} returns a \code{leakage_risk_summary}.
 }
 \description{
 Translate graph-derived split constraints into a stable, inspectable structure
@@ -58,9 +57,10 @@ The split-spec validator checks:
 Repeated validation of the same split spec yields deterministic issue IDs and
 diagnostics, which makes the returned validation object stable across runs.
 
-The \code{bioleak_*} class and function names are retained as the stable
-public API for this translation layer. They do not imply that the package is
-defined primarily by an external dependency.
+The produced \code{split_spec} is tool-agnostic. Downstream consumers
+(\pkg{bioLeak}, \pkg{fastml}, \pkg{rsample}, ...) provide their own adapters
+to convert a \code{split_spec} into their native split representation, so
+\pkg{splitGraph} has no runtime dependency on any of them.
 
 \code{summarize_leakage_risks()} reuses \code{validate_graph()} and
 \code{split_constraint} metadata rather than duplicating downstream

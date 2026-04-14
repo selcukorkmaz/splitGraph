@@ -53,3 +53,15 @@ sample dependency components, and direct shared dependencies within a
 When a \code{samples} subset is supplied, partial matching is not allowed:
 unknown sample identifiers raise an error rather than being silently dropped.
 }
+\examples{
+meta <- data.frame(
+  sample_id  = c("S1", "S2", "S3"),
+  subject_id = c("P1", "P1", "P2"),
+  batch_id   = c("B1", "B2", "B1")
+)
+g <- graph_from_metadata(meta)
+
+query_node_type(g, "Sample")
+query_neighbors(g, "sample:S1", direction = "out")
+detect_shared_dependencies(g, via = "Subject")
+}

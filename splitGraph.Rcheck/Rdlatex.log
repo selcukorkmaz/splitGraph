@@ -1,0 +1,150 @@
+Hmm ... looks like a package
+Converting parsed Rd's to LaTeX 
+Creating pdf output from LaTeX ...
+Error in texi2dvi(file = file, pdf = TRUE, clean = clean, quiet = quiet,  : 
+  Running 'texi2dvi' on 'Rd2.tex' failed.
+Messages:
+/opt/R/arm64/bin/texi2dvi: makeindex failed
+Output:
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-03-20>
+(./Rd2.tex
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/book.cls
+Document Class: book 2025/01/22 v1.4n Standard LaTeX document class
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/bk10.clo)) (/Library/Frameworks/R.framework/Resources/share/texmf/tex/latex/Rd.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/ifthen.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/iftex/iftex.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/longtable.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/bm.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/alltt.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/verbatim.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/url/url.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/textcomp.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amstext.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsgen.sty)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsbsy.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsopn.sty)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/amsfonts.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/amssymb.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/eucal.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/fontenc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/times.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/inconsolata/zi4.sty `inconsolata-zi4' v1.12, 2019/05/17 Text macros for Inconsolata (msharpe) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/xkeyval/xkeyval.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/xkeyval.tex (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/xkvutils.tex (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/keyval.tex))))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics/color.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics-cfg/color.cfg) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics-def/pdftex.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics/mathcolor.ltx)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/hyperref.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/pdfescape/pdfescape.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/infwarerr/infwarerr.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hycolor/hycolor.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/nameref.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/refcount/refcount.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/kvoptions/kvoptions.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/etoolbox/etoolbox.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/stringenc/stringenc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/pd1enc.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/intcalc/intcalc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/puenc.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/bitset/bitset.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/hpdftex.def (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/makeidx.sty)
+Writing index file Rd2.idx
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/t1ptm.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.aux) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.out) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.out) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/inconsolata/t1zi4.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.toc) [1{/Users/selcuk/Library/TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/Users/selcuk/Library/TinyTeX/texmf-dist/fonts/enc/dvips/base/8r.enc}{/Users/selcuk/Library/TinyTeX/texmf-dist/fonts/enc/dvips/inconsolata/i4-t1-0.enc}]
+Overfull \hbox (46.01753pt too wide) in paragraph at lines 92--98
+[]\T1/ptm/m/n/10 The trans-la-tion layer al-ways pro-duces canon-i-cal sample-level columns in-clud-ing []\T1/zi4/m/n/10 sample_id[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 sample_node_id[]\T1/ptm/m/n/10 ,
+
+Overfull \hbox (37.54942pt too wide) in paragraph at lines 92--98
+[]\T1/zi4/m/n/10 group_id[]\T1/ptm/m/n/10 , and []\T1/zi4/m/n/10 primary_group[]\T1/ptm/m/n/10 . When avail-able, it also car-ries []\T1/zi4/m/n/10 batch_group[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 study_group[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 timepoint_id[]\T1/ptm/m/n/10 ,
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/ts1ptm.fd) [2]
+Overfull \hbox (23.50018pt too wide) in paragraph at lines 131--134
+[]\T1/zi4/m/n/10 as_split_spec() []\T1/ptm/m/n/10 re-turns a []\T1/zi4/m/n/10 split_spec[]\T1/ptm/m/n/10 . []\T1/zi4/m/n/10 validate_split_spec() []\T1/ptm/m/n/10 re-turns a []\T1/zi4/m/n/10 split_spec_validation[]\T1/ptm/m/n/10 .
+
+Overfull \hbox (53.08014pt too wide) in paragraph at lines 148--148
+ []\T1/zi4/m/n/10 build_dependency_graph(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, 
+
+Overfull \hbox (13.08014pt too wide) in paragraph at lines 151--151
+ []\T1/zi4/m/n/10 build_depgraph(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE,[] 
+
+Overfull \hbox (28.09036pt too wide) in paragraph at lines 154--154
+ []\T1/zi4/m/n/10 validate_graph(graph, checks = c("ids", "references", "cardinality", "schema", "time"),[] 
+
+Overfull \hbox (43.09036pt too wide) in paragraph at lines 157--157
+ []\T1/zi4/m/n/10 validate_depgraph(graph, checks = c("ids", "references", "cardinality", "schema", "time"),[] 
+[3]
+Overfull \hbox (48.06088pt too wide) in paragraph at lines 180--184
+[]\T1/ptm/m/n/10 For []\T1/zi4/m/n/10 build_dependency_graph()[]\T1/ptm/m/n/10 , a []\T1/zi4/m/n/10 dependency_graph[]\T1/ptm/m/n/10 . For []\T1/zi4/m/n/10 validate_graph() []\T1/ptm/m/n/10 and []\T1/zi4/m/n/10 validate_depgraph()[]\T1/ptm/m/n/10 ,
+[4]
+Overfull \hbox (71.39984pt too wide) in paragraph at lines 217--217
+ []\T1/zi4/m/n/10 create_nodes(data, type, id_col, label_col = NULL, attr_cols = NULL, prefix = TRUE, dedupe = TRUE) 
+
+Overfull \hbox (11.42029pt too wide) in paragraph at lines 219--219
+ []\T1/zi4/m/n/10 create_edges(data, from_col, to_col, from_type, to_type, relation, attr_cols = NULL,[] 
+[5] [6]
+Overfull \hbox (17.15968pt too wide) in paragraph at lines 354--359
+[]\T1/ptm/m/n/10 Groups sam-ples by the tar-get of []\T1/zi4/m/n/10 sample_collected_at_timepoint[]\T1/ptm/m/n/10 . When []\T1/zi4/m/n/10 Timepoint
+
+Overfull \hbox (3.43857pt too wide) in paragraph at lines 360--364
+[]\T1/ptm/m/n/10 Projects the se-lected de-
+
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-03-20>
+(./Rd2.tex
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/book.cls
+Document Class: book 2025/01/22 v1.4n Standard LaTeX document class
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/bk10.clo)) (/Library/Frameworks/R.framework/Resources/share/texmf/tex/latex/Rd.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/ifthen.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/iftex/iftex.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/longtable.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/bm.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/alltt.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/tools/verbatim.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/url/url.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/textcomp.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amstext.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsgen.sty)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsbsy.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsmath/amsopn.sty)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/amsfonts.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/amssymb.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/eucal.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/fontenc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/times.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/inconsolata/zi4.sty `inconsolata-zi4' v1.12, 2019/05/17 Text macros for Inconsolata (msharpe) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/xkeyval/xkeyval.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/xkeyval.tex (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/xkvutils.tex (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/xkeyval/keyval.tex))))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics/color.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics-cfg/color.cfg) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics-def/pdftex.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/graphics/mathcolor.ltx)) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/hyperref.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/pdfescape/pdfescape.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/infwarerr/infwarerr.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hycolor/hycolor.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/nameref.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/refcount/refcount.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/kvoptions/kvoptions.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/etoolbox/etoolbox.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/stringenc/stringenc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/pd1enc.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/intcalc/intcalc.sty) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/puenc.def) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/bitset/bitset.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/hyperref/hpdftex.def (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/base/makeidx.sty)
+Writing index file Rd2.idx
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/t1ptm.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.aux) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.out) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.out) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/inconsolata/t1zi4.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.toc) [1{/Users/selcuk/Library/TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/Users/selcuk/Library/TinyTeX/texmf-dist/fonts/enc/dvips/base/8r.enc}{/Users/selcuk/Library/TinyTeX/texmf-dist/fonts/enc/dvips/inconsolata/i4-t1-0.enc}]
+Overfull \hbox (46.01753pt too wide) in paragraph at lines 92--98
+[]\T1/ptm/m/n/10 The trans-la-tion layer al-ways pro-duces canon-i-cal sample-level columns in-clud-ing []\T1/zi4/m/n/10 sample_id[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 sample_node_id[]\T1/ptm/m/n/10 ,
+
+Overfull \hbox (37.54942pt too wide) in paragraph at lines 92--98
+[]\T1/zi4/m/n/10 group_id[]\T1/ptm/m/n/10 , and []\T1/zi4/m/n/10 primary_group[]\T1/ptm/m/n/10 . When avail-able, it also car-ries []\T1/zi4/m/n/10 batch_group[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 study_group[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 timepoint_id[]\T1/ptm/m/n/10 ,
+(/Users/selcuk/Library/TinyTeX/texmf-dist/tex/latex/psnfss/ts1ptm.fd) [2]
+Overfull \hbox (23.50018pt too wide) in paragraph at lines 131--134
+[]\T1/zi4/m/n/10 as_split_spec() []\T1/ptm/m/n/10 re-turns a []\T1/zi4/m/n/10 split_spec[]\T1/ptm/m/n/10 . []\T1/zi4/m/n/10 validate_split_spec() []\T1/ptm/m/n/10 re-turns a []\T1/zi4/m/n/10 split_spec_validation[]\T1/ptm/m/n/10 .
+
+Overfull \hbox (53.08014pt too wide) in paragraph at lines 148--148
+ []\T1/zi4/m/n/10 build_dependency_graph(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, 
+
+Overfull \hbox (13.08014pt too wide) in paragraph at lines 151--151
+ []\T1/zi4/m/n/10 build_depgraph(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE,[] 
+
+Overfull \hbox (28.09036pt too wide) in paragraph at lines 154--154
+ []\T1/zi4/m/n/10 validate_graph(graph, checks = c("ids", "references", "cardinality", "schema", "time"),[] 
+
+Overfull \hbox (43.09036pt too wide) in paragraph at lines 157--157
+ []\T1/zi4/m/n/10 validate_depgraph(graph, checks = c("ids", "references", "cardinality", "schema", "time"),[] 
+[3]
+Overfull \hbox (48.06088pt too wide) in paragraph at lines 180--184
+[]\T1/ptm/m/n/10 For []\T1/zi4/m/n/10 build_dependency_graph()[]\T1/ptm/m/n/10 , a []\T1/zi4/m/n/10 dependency_graph[]\T1/ptm/m/n/10 . For []\T1/zi4/m/n/10 validate_graph() []\T1/ptm/m/n/10 and []\T1/zi4/m/n/10 validate_depgraph()[]\T1/ptm/m/n/10 ,
+[4]
+Overfull \hbox (71.39984pt too wide) in paragraph at lines 217--217
+ []\T1/zi4/m/n/10 create_nodes(data, type, id_col, label_col = NULL, attr_cols = NULL, prefix = TRUE, dedupe = TRUE) 
+
+Overfull \hbox (11.42029pt too wide) in paragraph at lines 219--219
+ []\T1/zi4/m/n/10 create_edges(data, from_col, to_col, from_type, to_type, relation, attr_cols = NULL,[] 
+[5] [6]
+Overfull \hbox (17.15968pt too wide) in paragraph at lines 354--359
+[]\T1/ptm/m/n/10 Groups sam-ples by the tar-get of []\T1/zi4/m/n/10 sample_collected_at_timepoint[]\T1/ptm/m/n/10 . When []\T1/zi4/m/n/10 Timepoint
+
+Overfull \hbox (3.43857pt too wide) in paragraph at lines 360--364
+[]\T1/ptm/m/n/10 Projects the se-lected de-pen-dency re-la-tions onto a sam-
+
+Overfull \hbox (1.95738pt too wide) in paragraph at lines 365--369
+\T1/ptm/m/n/10 is-tic pri-or-ity or-der and groups each sam-ple by the highest-priority avail-able de-pen-dency source.
+[7]
+Overfull \hbox (25.58987pt too wide) in paragraph at lines 373--378
+[]\T1/ptm/m/n/10 The re-turned []\T1/zi4/m/n/10 split_constraint$sample_map []\T1/ptm/m/n/10 al-ways con-tains []\T1/zi4/m/n/10 sample_id[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 sample_node_id[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 group_id[]\T1/ptm/m/n/10 ,
+
+Overfull \hbox (17.2492pt too wide) in paragraph at lines 373--378
+[]\T1/zi4/m/n/10 constraint_type[]\T1/ptm/m/n/10 , []\T1/zi4/m/n/10 group_label[]\T1/ptm/m/n/10 , and []\T1/zi4/m/n/10 explanation[]\T1/ptm/m/n/10 . Time-aware con-straints also in-clude []\T1/zi4/m/n/10 time_index[]\T1/ptm/m/n/10 ,
+
+Overfull \hbox (26.42029pt too wide) in paragraph at lines 407--407
+ []\T1/zi4/m/n/10 graph_node_set(data = NULL, schema_version = .depgraph_schema_version, source = list()) 
+
+Overfull \hbox (26.42029pt too wide) in paragraph at lines 409--409
+ []\T1/zi4/m/n/10 graph_edge_set(data = NULL, schema_version = .depgraph_schema_version, source = list())[] 
+
+Overfull \hbox (46.42029pt too wide) in paragraph at lines 413--413
+ []\T1/zi4/m/n/10 new_depgraph_nodes(data = NULL, schema_version = .depgraph_schema_version, source = list())[] 
+
+Overfull \hbox (46.42029pt too wide) in paragraph at lines 415--415
+ []\T1/zi4/m/n/10 new_depgraph_edges(data = NULL, schema_version = .depgraph_schema_version, source = list())[] 
+
+Overfull \hbox (116.38962pt too wide) in paragraph at lines 419--419
+ []\T1/zi4/m/n/10 graph_query_result(query = "", params = list(), nodes = NULL, edges = NULL, table = NULL, metadata = list())[] 
+
+Overfull \hbox (101.42029pt too wide) in paragraph at lines 421--421
+ []\T1/zi4/m/n/10 dependency_constraint(constraint_id, relation_types, sample_map, transitive = TRUE, metadata = list())[] 
+
+Overfull \hbox (68.09036pt too wide) in paragraph at lines 423--423
+ []\T1/zi4/m/n/10 split_constraint(strategy, sample_map, recommended_downstream_args = list(), metadata = list())[] 
+
+Overfull \hbox (161.41006pt too wide) in paragraph at lines 425--425
+ []\T1/zi4/m/n/10 leakage_constraint(issue_type, severity, affected_samples, evidence = NULL, recommendation = "", metadata = list())[] 
+[8] [9]
+Overfull \hbox (18.08014pt too wide) in paragraph at lines 512--512
+ []  \T1/zi4/m/n/10 via = c("Subject", "Batch", "Study", "Timepoint", "Assay", "FeatureSet", "Outcome"),[] 
+[10]
+No file Rd2.ind.
+[11] (/private/var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T/RtmpyxCrF9/Rd2pdf17cb531cea955/Rd2.aux) )
+(see the transcript file for additional information)</Users/selcuk/Library/TinyTeX/texmf-dist/fonts/type1/public/inconsolata/Inconsolata-zi4r.pfb></Users/selcuk/Library/TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></Users/selcuk/Library/TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></Users/selcuk/Library/TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></Users/selcuk/Library/TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on Rd2.pdf (11 pages, 99011 bytes).
+Transcript written on Rd2.log.
+Saving output to ‘splitGraph-manual.pdf’ ...
+Done
+You may want to clean up by 'rm -Rf /var/folders/dj/y28dp44x303ggfg6rg8n2v0h0000gn/T//RtmpyxCrF9/Rd2pdf17cb531cea955'

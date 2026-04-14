@@ -25,3 +25,14 @@ The canonical issue table includes the columns:
 \seealso{
 \code{\link{validate_graph}}
 }
+\examples{
+meta <- data.frame(
+  sample_id  = c("S1", "S2"),
+  subject_id = c("P1", "P2")
+)
+g <- graph_from_metadata(meta)
+
+report <- validate_graph(g)
+report$valid
+summary(report)
+}

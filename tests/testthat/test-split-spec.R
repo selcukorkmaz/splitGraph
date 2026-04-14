@@ -1,4 +1,4 @@
-make_bioleak_graph <- function(time_source = c("index", "precedence")) {
+make_split_spec_graph <- function(time_source = c("index", "precedence")) {
   time_source <- match.arg(time_source)
 
   meta <- data.frame(
@@ -50,18 +50,18 @@ make_bioleak_graph <- function(time_source = c("index", "precedence")) {
   build_dependency_graph(
     nodes = list(sample_nodes, subject_nodes, batch_nodes, study_nodes, time_nodes),
     edges = edge_sets,
-    graph_name = paste0("bioleak_graph_", time_source),
-    dataset_name = "BioLeakDemo"
+    graph_name = paste0("split_spec_graph_", time_source),
+    dataset_name = "SplitSpecDemo"
   )
 }
 
-test_that("as_bioleak_split_spec translates constraints into canonical sample data", {
-  graph <- make_bioleak_graph("index")
+test_that("as_split_spec translates constraints into canonical sample data", {
+  graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "batch")
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
-  validation <- validate_bioleak_split_spec(spec)
+  spec <- as_split_spec(constraint, graph = graph)
+  validation <- validate_split_spec(spec)
 
-  expect_s3_class(spec, "bioleak_split_spec")
+  expect_s3_class(spec, "split_spec")
   expect_true(all(c(
     "sample_id", "sample_node_id", "group_id", "primary_group", "batch_group",
     "study_group", "timepoint_id", "time_index", "order_rank"
@@ -77,13 +77,13 @@ test_that("as_bioleak_split_spec translates constraints into canonical sample da
   expect_true(validation$valid)
 })
 
-test_that("as_bioleak_split_spec preserves time-aware ordering semantics", {
-  graph <- make_bioleak_graph("precedence")
+test_that("as_split_spec preserves time-aware ordering semantics", {
+  graph <- make_split_spec_graph("precedence")
   constraint <- derive_split_constraints(graph, mode = "time")
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
-  validation <- validate_bioleak_split_spec(spec)
+  spec <- as_split_spec(constraint, graph = graph)
+  validation <- validate_split_spec(spec)
 
-  expect_s3_class(spec, "bioleak_split_spec")
+  expect_s3_class(spec, "split_spec")
   expect_identical(spec$time_var, "order_rank")
   expect_false(isTRUE(spec$ordering_required))
   expect_equal(spec$sample_data$order_rank[spec$sample_data$sample_id == "S2"], 2L)
@@ -92,10 +92,10 @@ test_that("as_bioleak_split_spec preserves time-aware ordering semantics", {
 })
 
 test_that("partial time coverage does not force invalid ordering requirements in generated split specs", {
-  graph <- make_bioleak_graph("index")
+  graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "time")
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
-  validation <- validate_bioleak_split_spec(spec)
+  spec <- as_split_spec(constraint, graph = graph)
+  validation <- validate_split_spec(spec)
 
   expect_false(isTRUE(spec$ordering_required))
   expect_identical(spec$time_var, "order_rank")
@@ -104,34 +104,34 @@ test_that("partial time coverage does not force invalid ordering requirements in
   expect_false(any(validation$issues$code == "missing_required_ordering"))
 })
 
-test_that("validate_bioleak_split_spec detects missing ordering and duplicate samples", {
-  graph <- make_bioleak_graph("index")
+test_that("validate_split_spec detects missing ordering and duplicate samples", {
+  graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "time")
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
+  spec <- as_split_spec(constraint, graph = graph)
   broken <- spec
   broken$ordering_required <- TRUE
   broken$sample_data$order_rank[] <- NA_integer_
   broken$sample_data <- rbind(broken$sample_data, broken$sample_data[1, , drop = FALSE])
 
-  validation <- validate_bioleak_split_spec(broken)
+  validation <- validate_split_spec(broken)
 
-  expect_s3_class(validation, "bioleak_split_spec_validation")
+  expect_s3_class(validation, "split_spec_validation")
   expect_false(validation$valid)
   expect_true(any(validation$issues$code == "duplicate_sample_id"))
   expect_true(any(validation$issues$code == "missing_required_ordering"))
   expect_true(length(capture.output(print(validation))) > 0L)
 })
 
-test_that("validate_bioleak_split_spec is deterministic across repeated runs", {
-  graph <- make_bioleak_graph("index")
+test_that("validate_split_spec is deterministic across repeated runs", {
+  graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "time")
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
+  spec <- as_split_spec(constraint, graph = graph)
   broken <- spec
   broken$sample_data$order_rank[] <- NA_integer_
   broken$sample_data <- rbind(broken$sample_data, broken$sample_data[1, , drop = FALSE])
 
-  validation_a <- validate_bioleak_split_spec(broken)
-  validation_b <- validate_bioleak_split_spec(broken)
+  validation_a <- validate_split_spec(broken)
+  validation_b <- validate_split_spec(broken)
 
   expect_identical(validation_a$issues$code, validation_b$issues$code)
   expect_identical(validation_a$issues$message, validation_b$issues$message)
@@ -140,9 +140,9 @@ test_that("validate_bioleak_split_spec is deterministic across repeated runs", {
 })
 
 test_that("summarize_leakage_risks combines graph, constraint, and split-spec diagnostics", {
-  graph <- make_bioleak_graph("index")
+  graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "composite", strategy = "strict", via = c("Subject", "Batch"))
-  spec <- as_bioleak_split_spec(constraint, graph = graph)
+  spec <- as_split_spec(constraint, graph = graph)
   summary_obj <- summarize_leakage_risks(graph, constraint = constraint, split_spec = spec)
 
   expect_s3_class(summary_obj, "leakage_risk_summary")

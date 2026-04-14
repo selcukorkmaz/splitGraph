@@ -14,6 +14,8 @@ Description: Represent biomedical dataset structure as typed dependency
     generation of stable split specifications for trustworthy model
     evaluation workflows.
 License: MIT + file LICENSE
+URL: https://github.com/selcukorkmaz/splitGraph
+BugReports: https://github.com/selcukorkmaz/splitGraph/issues
 Encoding: UTF-8
 Depends:
     R (>= 4.1.0)
@@ -28,3 +30,4 @@ Suggests:
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 NeedsCompilation: no
+RoxygenNote: 7.3.3

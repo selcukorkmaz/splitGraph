@@ -1,10 +1,21 @@
 # splitGraph 0.1.0
 
-- Initial public release of `splitGraph`.
-- Provides typed dependency-graph construction, validation, querying, and
-  split-constraint derivation for leakage-aware evaluation workflows.
-- Includes translation of constraints into stable sample-level split
-  specifications, plus preflight validation and leakage-risk summaries.
-- Treats the current exported classes and function names, including the
-  `bioleak_*` split-spec API, as the public package contract for the 0.1.0
-  release.
+Initial public release. Highlights:
+
+- Typed dependency-graph construction from canonical metadata via
+  `graph_from_metadata()`, or from explicit node and edge tables via
+  `create_nodes()` / `create_edges()` / `build_dependency_graph()`.
+- Structural, semantic, and leakage-relevant validation
+  (`validate_graph()`), typed query helpers, and projected
+  sample-dependency detection.
+- Split-constraint derivation (`derive_split_constraints()`) for
+  `subject`, `batch`, `study`, `time`, and `composite` modes, translated
+  into a stable, tool-agnostic `split_spec` via `as_split_spec()` with
+  preflight validation and leakage-risk summaries.
+- `plot()` method for `dependency_graph` with a typed, layered layout,
+  per-type node colors, and an auto-generated node-type legend.
+- `splitGraph` emits `split_spec` objects without runtime dependencies on
+  downstream tooling. Adapters live in consumer packages (`bioLeak`,
+  `fastml`, `rsample`, ...).
+
+See the README for a full feature overview and a runnable Quick Start.

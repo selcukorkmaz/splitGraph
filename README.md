@@ -6,25 +6,17 @@ explicit, validated, queried, and converted into deterministic split
 constraints.
 
 It does not fit models, run preprocessing pipelines, or generate resamples by
-itself. Its job is to encode dataset structure before evaluation so that
+itself. Its job is to encode dataset structure *before* evaluation so that
 overlap, provenance, and time-ordering assumptions are inspectable instead of
 implicit.
 
-## Current Capabilities
+![Example dependency graph](man/figures/README-plot-1.png)
 
-What is implemented now:
-
-- metadata ingestion with canonical ID normalization
-- canonical node and edge constructors
-- typed dependency-graph assembly backed by `igraph`
-- structural, semantic, and leakage-relevant validation
-- typed query and traversal helpers
-- projected sample-dependency detection
-- split-constraint derivation for subject, batch, study, time, and composite
-  modes
-- translation of constraints into stable sample-level split specifications
-- split-spec preflight validation and leakage summary helpers
-- S3 print, summary, plot, and `as.data.frame()` methods
+The plot above shows six samples (blue) that share three subjects (orange),
+two batches (green), two timepoints (red), and two outcome classes (brown).
+A plain `vfold_cv` on this dataset would violate subject, batch, *and* time
+structure at the same time — and that is exactly what the graph is designed
+to make visible.
 
 ## Why It Exists
 
@@ -44,49 +36,33 @@ correct while still violating the intended scientific separation.
 
 `splitGraph` makes those dependencies first-class objects.
 
-## What The Package Does
+## What It Does (and Does Not Do)
 
-`splitGraph` supports a full workflow:
+**Does:**
 
-1. Standardize metadata with `ingest_metadata()`.
-2. Build typed nodes with `create_nodes()`.
-3. Build typed edges with `create_edges()`.
-4. Assemble a `dependency_graph` with `build_dependency_graph()`.
-5. Validate the graph with `validate_graph()`.
-6. Inspect or traverse the graph with the query helpers.
-7. Derive split constraints with `derive_split_constraints()`.
-8. Translate those constraints into a stable split specification with
-   `as_bioleak_split_spec()`.
-9. Preflight the handoff with `validate_bioleak_split_spec()` or summarize the
-   overall state with `summarize_leakage_risks()`.
+- metadata ingestion with canonical ID normalization
+- one-shot graph construction from canonical metadata via
+  `graph_from_metadata()`
+- typed node and edge constructors backed by `igraph`
+- structural, semantic, and leakage-relevant validation
+- typed query and traversal helpers
+- projected sample-dependency detection
+- split-constraint derivation for subject, batch, study, time, and composite
+  modes
+- translation of constraints into a stable, tool-agnostic `split_spec`
+- split-spec preflight validation and leakage summary helpers
+- typed layered `plot()` method with per-type colors and a node-type legend
+- `print()`, `summary()`, and `as.data.frame()` on all core S3 objects
 
-## What It Does Not Do
+**Does not:**
 
-`splitGraph` is not:
-
-- a gene network package
-- a pathway graph package
-- a general-purpose graph analytics toolkit
-- a resampling engine
-- a model training framework
+- fit models or run preprocessing pipelines
+- generate resamples (`rsample` does that)
+- implement leakage-aware *training* workflows (`bioLeak` and `fastml` do)
+- provide a general-purpose graph analytics toolkit
 
 The package is intentionally narrow: dataset dependency structure for
 leakage-aware evaluation design.
-
-## Design Guarantees
-
-The package is intentionally strict in a few important places:
-
-- requested sample subsets must resolve completely; unknown sample IDs error
-  instead of being dropped
-- ambiguous direct assignments for batch, study, and timepoint are rejected
-- exact duplicate node and edge definitions may be collapsed, but conflicting
-  duplicates are rejected rather than resolved by row order
-- validation truth is not changed by severity filters
-- contradictory time-order metadata are rejected instead of being resolved
-  arbitrarily
-- generated split specifications are validated against the package’s own
-  preflight rules
 
 ## Installation
 
@@ -97,24 +73,73 @@ install.packages("remotes")
 remotes::install_github("selcukorkmaz/splitGraph")
 ```
 
+## Quick Start
+
+The fastest path is `graph_from_metadata()`, which auto-detects canonical
+columns in a metadata frame and assembles a validated `dependency_graph`:
+
+```r
+library(splitGraph)
+
+meta <- data.frame(
+  sample_id    = c("S1", "S2", "S3", "S4", "S5", "S6"),
+  subject_id   = c("P1", "P1", "P2", "P2", "P3", "P3"),
+  batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
+  timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
+  time_index   = c(0, 1, 0, 1, 0, 1),
+  outcome_value = c(0, 1, 0, 1, 1, 0)
+)
+
+g <- graph_from_metadata(meta, graph_name = "demo")
+plot(g)
+
+validation <- validate_graph(g)
+subject_constraint <- derive_split_constraints(g, mode = "subject")
+split_spec <- as_split_spec(subject_constraint, graph = g)
+validate_split_spec(split_spec)
+summarize_leakage_risks(g, constraint = subject_constraint, split_spec = split_spec)
+```
+
+For full control over node labels, attribute columns, and non-canonical
+relations, use `create_nodes()` / `create_edges()` / `build_dependency_graph()`
+directly.
+
+## Downstream Handoff
+
+`split_spec` is the tool-agnostic handoff object produced by
+`as_split_spec()`. Downstream packages provide their own adapters so that
+`splitGraph` has no runtime dependency on any of them:
+
+```r
+# fastml / tidymodels (rsample) — in fastml:
+rset <- fastml::rset_from_split_spec(split_spec, data = my_data, v = 5)
+# then use rset anywhere rsample::vfold_cv() is expected:
+# tune::tune_grid(wflow, resamples = rset, grid = grid, metrics = metrics)
+
+# bioLeak — in bioLeak:
+plan <- bioLeak::as_leaksplits(split_spec, data = my_data,
+                               outcome = "y", v = 5)
+```
+
+Signatures shown match `fastml` 0.7.8 and the current `bioLeak` adapter.
+Consult `?fastml::rset_from_split_spec` or `?bioLeak::as_leaksplits` in your
+installed versions if in doubt.
+
+The typical end-to-end flow is therefore:
+
+1. `graph_from_metadata(meta)` → typed `dependency_graph`
+2. `derive_split_constraints(g, mode = ...)` → `split_constraint`
+3. `as_split_spec(constraint, graph = g)` → `split_spec`
+4. adapter call in `fastml` / `bioLeak` / custom wrapper → native resamples
+
 ## Core Concepts
 
 ### Node types
 
-The current package supports these canonical node types:
-
-- `Sample`
-- `Subject`
-- `Batch`
-- `Study`
-- `Timepoint`
-- `Assay`
-- `FeatureSet`
-- `Outcome`
+- `Sample`, `Subject`, `Batch`, `Study`, `Timepoint`, `Assay`, `FeatureSet`,
+  `Outcome`
 
 ### Canonical edge types
-
-The current schema supports these canonical relations:
 
 - `sample_belongs_to_subject`
 - `sample_processed_in_batch`
@@ -130,266 +155,26 @@ The current schema supports these canonical relations:
 
 ### Main S3 objects
 
-- `graph_node_set`
-- `graph_edge_set`
-- `dependency_graph`
-- `depgraph_validation_report`
-- `graph_query_result`
-- `split_constraint`
-- `bioleak_split_spec`
-- `bioleak_split_spec_validation`
-- `leakage_risk_summary`
+`graph_node_set`, `graph_edge_set`, `dependency_graph`,
+`depgraph_validation_report`, `graph_query_result`, `split_constraint`,
+`split_spec`, `split_spec_validation`, `leakage_risk_summary`.
 
 ## Main Functions
 
-### Ingestion and construction
-
-- `ingest_metadata()`
-- `create_nodes()`
-- `create_edges()`
-- `build_dependency_graph()`
-- `build_depgraph()`
-- `dependency_graph()`
-- `as_igraph()`
-
-### Validation
-
-- `validate_graph()`
-- `validate_depgraph()`
-- `validate_bioleak_split_spec()`
-
-### Queries
-
-- `query_node_type()`
-- `query_edge_type()`
-- `query_neighbors()`
-- `query_paths()`
-- `query_shortest_paths()`
-- `detect_dependency_components()`
-- `detect_shared_dependencies()`
-
-### Constraint derivation
-
-- `derive_split_constraints()`
-- `grouping_vector()`
-
-### Split-spec translation
-
-- `as_bioleak_split_spec()`
-- `summarize_leakage_risks()`
-
-## Quick Start
-
-```r
-library(splitGraph)
-
-meta <- ingest_metadata(
-  data.frame(
-    sample_id = c("S1", "S2", "S3", "S4"),
-    subject_id = c("P1", "P1", "P2", "P3"),
-    batch_id = c("B1", "B2", "B1", "B3"),
-    study_id = c("ST1", "ST1", "ST2", "ST2"),
-    timepoint_id = c("T0", "T1", "T0", "T2"),
-    stringsAsFactors = FALSE
-  ),
-  dataset_name = "demo_dataset"
-)
-
-sample_nodes <- create_nodes(meta, type = "Sample", id_col = "sample_id")
-subject_nodes <- create_nodes(meta, type = "Subject", id_col = "subject_id")
-batch_nodes <- create_nodes(meta, type = "Batch", id_col = "batch_id")
-study_nodes <- create_nodes(meta, type = "Study", id_col = "study_id")
-time_nodes <- create_nodes(
-  transform(
-    unique(meta[!is.na(meta$timepoint_id), "timepoint_id", drop = FALSE]),
-    time_index = c(0L, 1L, 2L)
-  ),
-  type = "Timepoint",
-  id_col = "timepoint_id",
-  attr_cols = "time_index"
-)
-
-subject_edges <- create_edges(
-  meta, "sample_id", "subject_id",
-  "Sample", "Subject", "sample_belongs_to_subject"
-)
-batch_edges <- create_edges(
-  meta, "sample_id", "batch_id",
-  "Sample", "Batch", "sample_processed_in_batch"
-)
-study_edges <- create_edges(
-  meta, "sample_id", "study_id",
-  "Sample", "Study", "sample_from_study"
-)
-time_edges <- create_edges(
-  meta, "sample_id", "timepoint_id",
-  "Sample", "Timepoint", "sample_collected_at_timepoint"
-)
-
-g <- build_dependency_graph(
-  nodes = list(sample_nodes, subject_nodes, batch_nodes, study_nodes, time_nodes),
-  edges = list(subject_edges, batch_edges, study_edges, time_edges),
-  graph_name = "demo_graph",
-  dataset_name = "demo_dataset"
-)
-
-validation <- validate_graph(g)
-subject_constraint <- derive_split_constraints(g, mode = "subject")
-time_constraint <- derive_split_constraints(g, mode = "time")
-split_spec <- as_bioleak_split_spec(time_constraint, graph = g)
-split_spec_validation <- validate_bioleak_split_spec(split_spec)
-risk_summary <- summarize_leakage_risks(g, constraint = time_constraint, split_spec = split_spec)
-```
-
-## Typical Workflow
-
-### 1. Ingest metadata
-
-`ingest_metadata()` standardizes identifier-like columns, supports column
-renaming through `col_map`, and attaches `dataset_name` as metadata.
-
-Use it when raw metadata do not already match the expected column names.
-
-### 2. Create canonical nodes and edges
-
-`create_nodes()` converts a metadata frame into a `graph_node_set`.
-
-Key behaviors:
-
-- typed node IDs such as `sample:S1`
-- optional labels
-- optional attribute columns stored in `attrs`
-- exact duplicate collapsing only when the retained definition is identical
-
-`create_edges()` converts source and target columns into a `graph_edge_set`.
-
-Key behaviors:
-
-- validates known relation signatures
-- optional endpoint dropping through `allow_missing = TRUE`
-- exact duplicate collapsing only when attrs are identical
-- support for prefixed and unprefixed endpoint IDs through `from_prefix` and
-  `to_prefix`
-
-### 3. Assemble and validate the graph
-
-`build_dependency_graph()` merges canonical node and edge tables, builds the
-internal `igraph`, and optionally validates the result before returning it.
-
-`validate_graph()` returns a `depgraph_validation_report` with:
-
-- `valid`
-- `issues`
-- `errors`
-- `warnings`
-- `advisories`
-- `metrics`
-
-Severity filters only trim the returned `issues` table. They do not change the
-underlying `valid` result, and `error_on_fail = TRUE` still stops on hidden
-errors.
-
-Validation currently covers:
-
-- identifier completeness and uniqueness
-- edge endpoint integrity
-- known edge signature enforcement
-- single-target structural violations
-- schema-level node-attribute checks
-- conditional study-assignment warnings
-- invalid feature-set and outcome metadata
-- cyclic or contradictory time ordering
-- graph-local leakage diagnostics such as repeated-subject structure and shared
-  feature provenance
-
-### 4. Query the dependency structure
-
-The query layer returns `graph_query_result` objects with a tidy `table`
-component and matching node/edge subsets.
-
-Use:
-
-- `query_node_type()` to inspect typed node subsets
-- `query_edge_type()` to inspect typed edge subsets
-- `query_neighbors()` for local neighborhoods
-- `query_paths()` and `query_shortest_paths()` for directed traversal
-- `detect_shared_dependencies()` to find sample pairs sharing a direct source
-- `detect_dependency_components()` to project selected dependencies onto a
-  sample graph and identify connected components
-
-### 5. Derive split constraints
-
-`derive_split_constraints()` converts the graph into deterministic
-sample-level grouping rules.
-
-Supported modes:
-
-- `subject`
-- `batch`
-- `study`
-- `time`
-- `composite`
-
-Composite strategies:
-
-- `strict`: connected components in the projected sample dependency graph
-- `rule_based`: deterministic priority fallback over available dependency
-  sources
-
-The returned `split_constraint$sample_map` always includes:
-
-- `sample_id`
-- `sample_node_id`
-- `group_id`
-- `constraint_type`
-- `group_label`
-- `explanation`
-
-Time-aware outputs also include `timepoint_id`, `time_index`, and `order_rank`
-when available.
-
-### 6. Translate into a split specification
-
-`as_bioleak_split_spec()` converts a `split_constraint` into a stable
-sample-level handoff object for downstream evaluation workflows.
-
-The `bioleak_*` object and function names are retained as the stable public API
-for this translation layer.
-
-The translated `sample_data` always includes:
-
-- `sample_id`
-- `sample_node_id`
-- `group_id`
-- `primary_group`
-- `batch_group`
-- `study_group`
-- `timepoint_id`
-- `time_index`
-- `order_rank`
-
-Important detail:
-
-- `time_var` may be present when ordering information exists for only some
-  samples
-- `ordering_required` is only set to `TRUE` when the constraint implies
-  complete ordering coverage
-
-`validate_bioleak_split_spec()` performs preflight checks on the translated
-object before downstream resampling is attempted.
+| Layer | Functions |
+|---|---|
+| Ingestion and construction | `ingest_metadata()`, `graph_from_metadata()`, `create_nodes()`, `create_edges()`, `build_dependency_graph()`, `dependency_graph()`, `as_igraph()` |
+| Validation | `validate_graph()`, `validate_split_spec()` |
+| Queries | `query_node_type()`, `query_edge_type()`, `query_neighbors()`, `query_paths()`, `query_shortest_paths()`, `detect_dependency_components()`, `detect_shared_dependencies()` |
+| Constraint derivation | `derive_split_constraints()`, `grouping_vector()` |
+| Split-spec translation | `as_split_spec()`, `summarize_leakage_risks()` |
 
 ## Example Queries
 
 ```r
 query_node_type(g, "Subject")
-query_edge_type(g, "sample_from_study")
+query_edge_type(g, "sample_processed_in_batch")
 query_neighbors(g, node_ids = "sample:S1", edge_types = "sample_belongs_to_subject")
-query_paths(
-  g,
-  from = "sample:S1",
-  to = "study:ST1",
-  edge_types = "sample_from_study"
-)
 detect_shared_dependencies(g, via = "Batch")
 detect_dependency_components(g, via = c("Subject", "Batch"))
 ```
@@ -398,58 +183,60 @@ detect_dependency_components(g, via = c("Subject", "Batch"))
 
 ```r
 subject_constraint <- derive_split_constraints(g, mode = "subject")
-batch_constraint <- derive_split_constraints(g, mode = "batch")
-study_constraint <- derive_split_constraints(g, mode = "study")
-time_constraint <- derive_split_constraints(g, mode = "time")
+batch_constraint   <- derive_split_constraints(g, mode = "batch")
+study_constraint   <- derive_split_constraints(g, mode = "study")
+time_constraint    <- derive_split_constraints(g, mode = "time")
 
 strict_composite <- derive_split_constraints(
-  g,
-  mode = "composite",
-  strategy = "strict",
+  g, mode = "composite", strategy = "strict",
   via = c("Subject", "Batch")
 )
 
 rule_based_composite <- derive_split_constraints(
-  g,
-  mode = "composite",
-  strategy = "rule_based",
+  g, mode = "composite", strategy = "rule_based",
   priority = c("batch", "study", "subject", "time")
 )
 ```
 
-## Inspection Helpers
+## Plot Method
 
-All core objects implement:
+`plot(g)` renders a typed, layered layout with per-type node colors and an
+auto-generated node-type legend. Layers: Sample (top), peer dependencies
+(Subject / Batch / Study / Timepoint) in the middle band,
+Assay / FeatureSet next, Outcome (bottom).
 
-- `print()`
-- `summary()`
-- `as.data.frame()`
+```r
+plot(g)                              # typed layered layout (default)
+plot(g, layout = "sugiyama")         # alternative hierarchical layout
+plot(g, show_labels = FALSE)         # hide node labels on dense graphs
+plot(g, legend = FALSE)              # suppress the legend
+plot(g, legend_position = "bottomright")
+plot(g, node_colors = c(Sample = "#000000"))  # override type colors
+```
 
-`dependency_graph` also supports:
+## Citation
 
-- `plot()`
+```r
+citation("splitGraph")
+```
 
-Useful helpers:
+produces:
 
-- `grouping_vector()` extracts a named `sample_id -> group_id` mapping from a
-  `split_constraint`
-- `as_igraph()` returns the internal traversal graph
+> Korkmaz S (2026). *splitGraph: Dataset Dependency Graphs for
+> Leakage-Aware Evaluation*. R package version 0.1.0.
+> <https://github.com/selcukorkmaz/splitGraph>
 
-## Downstream Integration
+## License
 
-`splitGraph` prepares structure-aware evaluation inputs.
+MIT. See `LICENSE`.
 
-One supported handoff format is the package's `bioleak_split_spec` object,
-which provides stable sample-level grouping, blocking, and ordering fields.
+## Appendix: Design Guarantees
 
-That separation is intentional:
+The package prefers explicit failure over silent guessing. In particular:
 
-- `splitGraph` models and validates dataset structure
-- downstream tooling decides how to operationalize the split specification
-
-## Development Notes
-
-This package currently emphasizes correctness and explicit failure over
-convenience. If the graph is ambiguous, internally inconsistent, or
-insufficiently specified for a requested operation, the package generally
-errors instead of silently guessing.
+- unknown sample IDs, ambiguous direct assignments, and conflicting
+  duplicate nodes or edges are rejected rather than silently resolved
+- contradictory time-order metadata are rejected rather than reconciled
+  arbitrarily
+- validation truth is not changed by severity filters, and generated
+  split specs are re-validated against the package's own preflight rules
