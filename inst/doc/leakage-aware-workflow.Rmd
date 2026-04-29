@@ -89,6 +89,38 @@ meta
 This is still a small example, but it already contains enough structure to
 make naive random splitting risky.
 
+## Fast path: `graph_from_metadata()`
+
+When your metadata already uses the canonical column names (`sample_id`,
+`subject_id`, `batch_id`, `study_id`, `timepoint_id`, `time_index`,
+`assay_id`, `featureset_id`, `outcome_id` / `outcome_value`),
+`graph_from_metadata()` does ingestion, typed node construction, canonical
+edge construction, and optional `timepoint_precedes` derivation in a single
+call:
+
+```{r fast-path}
+quick_graph <- graph_from_metadata(
+  data.frame(
+    sample_id    = c("S1", "S2", "S3", "S4", "S5", "S6"),
+    subject_id   = c("P1", "P1", "P2", "P2", "P3", "P3"),
+    batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
+    timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
+    time_index   = c(0, 1, 0, 1, 0, 1),
+    outcome_value = c(0, 1, 0, 1, 1, 0)
+  ),
+  graph_name = "quick_demo"
+)
+
+quick_graph
+```
+
+The rest of this vignette uses the explicit constructor path because it lets
+us show node attributes (`time_index`, `visit_label`, `platform`,
+`derivation_scope`) and non-canonical edges (`featureset_generated_from_*`,
+`subject_has_outcome`) that `graph_from_metadata()` does not build for you.
+Use `graph_from_metadata()` when the canonical columns are enough; use the
+explicit path when you need custom attributes or extra relations.
+
 ## Ingest metadata and build typed nodes and edges
 
 The first step is to standardize metadata and then turn each entity type into
@@ -274,6 +306,27 @@ At this point the package has a single `dependency_graph` object with both
 tabular and `igraph` representations behind it. The summary is useful because
 it tells you exactly which entity types and relation types are present before
 you derive any split rules.
+
+### Visualize the typed structure
+
+`plot()` renders the graph with a typed, layered layout: `Sample` on top,
+peer dependencies (`Subject`, `Batch`, `Study`, `Timepoint`) in the middle
+band, `Assay`/`FeatureSet` below that, and `Outcome` at the bottom. Node
+colors are keyed to type and an auto-generated legend is drawn by default.
+
+```{r plot, fig.width = 7, fig.height = 5}
+plot(graph)
+```
+
+Useful options:
+
+```{r plot-options, eval = FALSE}
+plot(graph, layout = "sugiyama")         # alternative hierarchical layout
+plot(graph, show_labels = FALSE)         # hide labels on dense graphs
+plot(graph, legend = FALSE)              # suppress the legend
+plot(graph, legend_position = "bottomright")
+plot(graph, node_colors = c(Sample = "#000000"))
+```
 
 ## Validate before you split
 
@@ -515,8 +568,8 @@ The important detail is that ordering is still derived, but the source is
 
 The graph-derived constraint is not the end of the workflow. The main handoff
 target is a canonical sample-level split specification — the `split_spec`
-class. Downstream tools (bioLeak, fastml, rsample, ...) consume it through
-their own adapters, so `split_spec` stays tool-agnostic.
+class. Downstream tools consume it through their own adapters, so
+`split_spec` stays tool-agnostic.
 
 ```{r split-spec}
 split_spec <- as_split_spec(strict_constraint, graph = graph)
@@ -559,6 +612,27 @@ This is a useful stopping point before model training. It gives you one place
 to review whether the graph is structurally sound, whether the chosen
 constraint is overly singleton-heavy, and whether the downstream split spec is
 ready to use.
+
+## Downstream handoff
+
+`split_spec` is the tool-agnostic handoff artifact. `splitGraph` does not
+know about any particular resampling package — downstream consumers provide
+their own adapters so `splitGraph` stays neutral. The typical end-to-end
+flow is:
+
+1. `graph_from_metadata()` (or the explicit constructor path) → typed
+   `dependency_graph`
+2. `derive_split_constraints(g, mode = ...)` → `split_constraint`
+3. `as_split_spec(constraint, graph = g)` → `split_spec`
+4. adapter in the downstream package → native resamples
+
+The `sample_data` frame carried by `split_spec` exposes exactly the columns
+downstream adapters consume: `sample_id` for joining against the observation
+frame, `group_id` for grouped resampling, `batch_group` / `study_group` for
+blocking, and `order_rank` for ordered evaluation. Adapters can be built by
+any package that wants to consume a `split_spec` — for example, on top of
+`rsample::group_vfold_cv()` (grouped CV keyed to `group_id`) or
+`rsample::rolling_origin()` (ordered evaluation keyed to `order_rank`).
 
 ## Case studies
 

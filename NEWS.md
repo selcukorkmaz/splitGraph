@@ -15,7 +15,8 @@ Initial public release. Highlights:
 - `plot()` method for `dependency_graph` with a typed, layered layout,
   per-type node colors, and an auto-generated node-type legend.
 - `splitGraph` emits `split_spec` objects without runtime dependencies on
-  downstream tooling. Adapters live in consumer packages (`bioLeak`,
-  `fastml`, `rsample`, ...).
+  downstream tooling. Adapters are expected to live in consumer packages
+  (e.g. packages built on top of `rsample`) so that `splitGraph` itself
+  stays neutral.
 
 See the README for a full feature overview and a runnable Quick Start.

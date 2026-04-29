@@ -1,5 +1,48 @@
 # Constructors for core splitGraph S3 classes.
 
+#' Construct Core splitGraph S3 Objects
+#'
+#' Low-level constructors for the core S3 classes used throughout
+#' \pkg{splitGraph}.
+#'
+#' @param data A data frame matching the canonical schema for nodes or edges.
+#' @param schema_version Schema version string stored on the object.
+#' @param source Optional source metadata.
+#' @param nodes,edges A \code{graph_node_set} and \code{graph_edge_set}.
+#' @param graph An internal \code{igraph} object.
+#' @param metadata,caches,params,recommended_downstream_args Named lists with
+#'   auxiliary metadata.
+#' @param query Query label stored on a \code{graph_query_result}.
+#' @param table Tabular query result payload.
+#' @param constraint_id,relation_types,transitive Fields describing a
+#'   dependency constraint.
+#' @param sample_map Sample-level mapping table for constraints.
+#' @param strategy Split strategy identifier.
+#' @param issue_type,severity,affected_samples,evidence,recommendation Fields
+#'   describing a leakage warning.
+#' @return An S3 object corresponding to the constructor that was called.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id = c("S1", "S2"),
+#'   subject_id = c("P1", "P2")
+#' )
+#'
+#' samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
+#' subjects <- create_nodes(meta, type = "Subject", id_col = "subject_id")
+#' edges <- create_edges(
+#'   meta,
+#'   from_col = "sample_id",
+#'   to_col = "subject_id",
+#'   from_type = "Sample",
+#'   to_type = "Subject",
+#'   relation = "sample_belongs_to_subject"
+#' )
+#'
+#' nodes_set <- graph_node_set(rbind(samples$data, subjects$data))
+#' edges_set <- graph_edge_set(edges$data)
+#' nodes_set
+#' edges_set
+#' @export
 graph_node_set <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
   data <- .depgraph_normalize_node_data(data)
   structure(
@@ -12,6 +55,8 @@ graph_node_set <- function(data = NULL, schema_version = .depgraph_schema_versio
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 graph_edge_set <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
   data <- .depgraph_normalize_edge_data(data)
   structure(
@@ -24,6 +69,8 @@ graph_edge_set <- function(data = NULL, schema_version = .depgraph_schema_versio
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 dependency_graph <- function(nodes, edges, graph, metadata = list(), caches = list()) {
   .depgraph_assert(inherits(nodes, "graph_node_set"), "`nodes` must be a `graph_node_set`.")
   .depgraph_assert(inherits(edges, "graph_edge_set"), "`edges` must be a `graph_edge_set`.")
@@ -61,18 +108,26 @@ dependency_graph <- function(nodes, edges, graph, metadata = list(), caches = li
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 new_depgraph_nodes <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
   graph_node_set(data = data, schema_version = schema_version, source = source)
 }
 
+#' @rdname graph_node_set
+#' @export
 new_depgraph_edges <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
   graph_edge_set(data = data, schema_version = schema_version, source = source)
 }
 
+#' @rdname graph_node_set
+#' @export
 new_depgraph <- function(nodes, edges, graph = NULL, metadata = list(), caches = list()) {
   dependency_graph(nodes = nodes, edges = edges, graph = graph, metadata = metadata, caches = caches)
 }
 
+#' @rdname graph_node_set
+#' @export
 graph_query_result <- function(query = "", params = list(), nodes = NULL, edges = NULL, table = NULL, metadata = list()) {
   structure(
     list(
@@ -87,6 +142,8 @@ graph_query_result <- function(query = "", params = list(), nodes = NULL, edges 
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 dependency_constraint <- function(constraint_id, relation_types, sample_map, transitive = TRUE, metadata = list()) {
   .depgraph_assert(is.data.frame(sample_map), "`sample_map` must be a data.frame.")
   structure(
@@ -101,6 +158,8 @@ dependency_constraint <- function(constraint_id, relation_types, sample_map, tra
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 split_constraint <- function(strategy, sample_map, recommended_downstream_args = list(), metadata = list()) {
   .depgraph_assert(is.data.frame(sample_map), "`sample_map` must be a data.frame.")
   structure(
@@ -114,6 +173,8 @@ split_constraint <- function(strategy, sample_map, recommended_downstream_args =
   )
 }
 
+#' @rdname graph_node_set
+#' @export
 leakage_constraint <- function(issue_type, severity, affected_samples, evidence = NULL, recommendation = "", metadata = list()) {
   structure(
     list(
@@ -128,6 +189,62 @@ leakage_constraint <- function(issue_type, severity, affected_samples, evidence 
   )
 }
 
+#' Validation Report Object for splitGraph Graphs
+#'
+#' \code{depgraph_validation_report} is the structured return type produced by
+#' \code{validate_graph()} and \code{validate_depgraph()}.
+#'
+#' The report contains:
+#'
+#' \itemize{
+#'   \item \code{graph_name}: graph label when available
+#'   \item \code{valid}: whether any \code{error}-severity issues were found
+#'   \item \code{issues}: canonical issue table
+#'   \item \code{summary}: counts by level, severity, and code
+#'   \item \code{metadata}: report metadata
+#'   \item \code{errors}, \code{warnings}, \code{advisories}: backward-compatible
+#'     message vectors
+#'   \item \code{metrics}: graph and issue counts
+#' }
+#'
+#' The canonical issue table includes the columns:
+#' \code{issue_id}, \code{level}, \code{severity}, \code{code}, \code{message},
+#' \code{node_ids}, \code{edge_ids}, and \code{details}.
+#'
+#' @param graph_name Graph label stored on the report.
+#' @param issues Canonical issue table. When \code{NULL}, an empty skeleton is
+#'   constructed.
+#' @param metrics Named list of graph- and issue-level counts.
+#' @param metadata Named list of report metadata.
+#' @param valid Optional logical override for the overall validity flag.
+#' @param errors,warnings,advisories Optional character vectors of
+#'   severity-specific messages.
+#' @param sample_data Sample-level mapping table carried by a
+#'   \code{split_spec}.
+#' @param group_var Name of the grouping column.
+#' @param block_vars Optional blocking variable names.
+#' @param time_var Optional ordering column name.
+#' @param ordering_required Whether ordering is required for downstream
+#'   evaluation.
+#' @param constraint_mode,constraint_strategy Constraint-derivation metadata.
+#' @param recommended_resampling Optional recommended resampling routine.
+#' @param overview Character vector of human-readable overview lines.
+#' @param diagnostics Diagnostics data frame for leakage risks.
+#' @param validation_summary,constraint_summary,split_spec_summary Named lists
+#'   carrying pre-computed summaries.
+#' @return An S3 object corresponding to the constructor that was called.
+#' @seealso \code{\link{validate_graph}}
+#' @examples
+#' meta <- data.frame(
+#'   sample_id  = c("S1", "S2"),
+#'   subject_id = c("P1", "P2")
+#' )
+#' g <- graph_from_metadata(meta)
+#'
+#' report <- validate_graph(g)
+#' report$valid
+#' summary(report)
+#' @export
 depgraph_validation_report <- function(graph_name = NULL, issues = NULL, metrics = list(), metadata = list(), valid = NULL, errors = NULL, warnings = NULL, advisories = NULL) {
   if (is.null(issues)) {
     issues <- data.frame(
@@ -187,6 +304,8 @@ depgraph_validation_report <- function(graph_name = NULL, issues = NULL, metrics
   )
 }
 
+#' @rdname depgraph_validation_report
+#' @export
 split_spec <- function(sample_data = NULL, group_var = "group_id", block_vars = character(), time_var = NULL, ordering_required = FALSE, constraint_mode = NULL, constraint_strategy = NULL, recommended_resampling = NULL, metadata = list()) {
   if (is.null(sample_data)) {
     sample_data <- data.frame(
@@ -221,6 +340,8 @@ split_spec <- function(sample_data = NULL, group_var = "group_id", block_vars = 
   )
 }
 
+#' @rdname depgraph_validation_report
+#' @export
 split_spec_validation <- function(issues = NULL, metadata = list()) {
   if (is.null(issues)) {
     issues <- data.frame(
@@ -251,6 +372,8 @@ split_spec_validation <- function(issues = NULL, metadata = list()) {
   )
 }
 
+#' @rdname depgraph_validation_report
+#' @export
 leakage_risk_summary <- function(overview = character(), diagnostics = NULL, validation_summary = list(), constraint_summary = list(), split_spec_summary = list(), metadata = list()) {
   if (is.null(diagnostics)) {
     diagnostics <- data.frame(

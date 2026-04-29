@@ -1,5 +1,50 @@
 # Graph assembly helpers.
 
+#' Assemble and Validate Dependency Graphs
+#'
+#' Combine canonical node and edge tables into a typed dependency graph and
+#' perform structural, semantic, and graph-local leakage-aware validation.
+#'
+#' @param nodes,edges Lists of \code{graph_node_set} and \code{graph_edge_set}
+#'   objects.
+#' @param graph_name,dataset_name Optional metadata labels.
+#' @param validate If \code{TRUE}, run \code{validate_graph()} before returning.
+#' @param validation_overrides Optional named list of explicit validation
+#'   exceptions.
+#' @param graph A \code{dependency_graph}.
+#' @param checks Validation checks to run.
+#' @param error_on_fail If \code{TRUE}, stop when validation errors are found
+#'   across all detected issues from the selected validation levels, even if
+#'   those errors are hidden from \code{issues} by \code{severities}.
+#' @param levels Optional validation layers to run.
+#' @param severities Optional severities to retain in the returned
+#'   \code{issues} table. This filter does not change whether the graph is
+#'   considered valid.
+#' @param x A \code{dependency_graph}.
+#' @return For \code{build_dependency_graph()}, a \code{dependency_graph}. For
+#'   \code{validate_graph()} and \code{validate_depgraph()}, a
+#'   \code{depgraph_validation_report}. For \code{as_igraph()}, the underlying
+#'   \code{igraph} object.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id = c("S1", "S2"),
+#'   subject_id = c("P1", "P2")
+#' )
+#'
+#' samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
+#' subjects <- create_nodes(meta, type = "Subject", id_col = "subject_id")
+#' edges <- create_edges(
+#'   meta,
+#'   "sample_id",
+#'   "subject_id",
+#'   "Sample",
+#'   "Subject",
+#'   "sample_belongs_to_subject"
+#' )
+#'
+#' g <- build_dependency_graph(list(samples, subjects), list(edges))
+#' validate_graph(g)
+#' @export
 build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, validation_overrides = list()) {
   node_data <- .depgraph_bind_data(nodes, "data")
   edge_data <- .depgraph_bind_data(edges, "data")
@@ -45,6 +90,8 @@ build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name
   graph_obj
 }
 
+#' @rdname build_dependency_graph
+#' @export
 build_depgraph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, validation_overrides = list()) {
   build_dependency_graph(
     nodes = nodes,
@@ -56,6 +103,8 @@ build_depgraph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL,
   )
 }
 
+#' @rdname build_dependency_graph
+#' @export
 as_igraph <- function(x) {
   .depgraph_assert(inherits(x, "dependency_graph"), "`x` must be a `dependency_graph`.")
   x$graph

@@ -1,5 +1,6 @@
 # S3 methods for splitGraph core classes.
 
+#' @export
 print.graph_node_set <- function(x, ...) {
   cat(
     "<graph_node_set>",
@@ -10,6 +11,7 @@ print.graph_node_set <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.graph_node_set <- function(object, ...) {
   list(
     schema_version = object$schema_version,
@@ -18,10 +20,12 @@ summary.graph_node_set <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.graph_node_set <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$data
 }
 
+#' @export
 print.graph_edge_set <- function(x, ...) {
   cat(
     "<graph_edge_set>",
@@ -32,6 +36,7 @@ print.graph_edge_set <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.graph_edge_set <- function(object, ...) {
   list(
     schema_version = object$schema_version,
@@ -40,10 +45,12 @@ summary.graph_edge_set <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.graph_edge_set <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$data
 }
 
+#' @export
 print.dependency_graph <- function(x, ...) {
   graph_name <- x$metadata$graph_name %||% "<unnamed>"
   cat(
@@ -56,6 +63,7 @@ print.dependency_graph <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.dependency_graph <- function(object, ...) {
   list(
     graph_name = object$metadata$graph_name,
@@ -127,6 +135,7 @@ summary.dependency_graph <- function(object, ...) {
   unname(colors)
 }
 
+#' @export
 plot.dependency_graph <- function(x,
                                   layout = c("typed", "sugiyama", "auto"),
                                   node_colors = NULL,
@@ -201,12 +210,14 @@ plot.dependency_graph <- function(x,
   invisible(x)
 }
 
+#' @export
 print.graph_query_result <- function(x, ...) {
   cat("<graph_query_result>", x$query, "\n")
   cat("  Rows:", nrow(x$table), "\n")
   invisible(x)
 }
 
+#' @export
 summary.graph_query_result <- function(object, ...) {
   list(
     query = object$query,
@@ -216,16 +227,19 @@ summary.graph_query_result <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.graph_query_result <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$table
 }
 
+#' @export
 print.dependency_constraint <- function(x, ...) {
   cat("<dependency_constraint>", x$constraint_id, "\n")
   cat("  Samples:", nrow(x$sample_map), "\n")
   invisible(x)
 }
 
+#' @export
 summary.dependency_constraint <- function(object, ...) {
   group_col <- intersect(c("group_id", "split_unit", "block_id"), names(object$sample_map))
   n_groups <- if (length(group_col) == 0L) NA_integer_ else length(unique(object$sample_map[[group_col[[1L]]]]))
@@ -238,10 +252,12 @@ summary.dependency_constraint <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.dependency_constraint <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$sample_map
 }
 
+#' @export
 print.split_constraint <- function(x, ...) {
   cat("<split_constraint>", x$strategy, "\n")
   cat("  Samples:", nrow(x$sample_map), "\n")
@@ -255,6 +271,7 @@ print.split_constraint <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.split_constraint <- function(object, ...) {
   warnings <- object$metadata$warnings %||% character()
   list(
@@ -267,16 +284,19 @@ summary.split_constraint <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.split_constraint <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$sample_map
 }
 
+#' @export
 print.leakage_constraint <- function(x, ...) {
   cat("<leakage_constraint>", x$issue_type, "(", x$severity, ")\n")
   cat("  Affected samples:", length(x$affected_samples), "\n")
   invisible(x)
 }
 
+#' @export
 summary.leakage_constraint <- function(object, ...) {
   list(
     issue_type = object$issue_type,
@@ -286,10 +306,12 @@ summary.leakage_constraint <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.leakage_constraint <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$evidence
 }
 
+#' @export
 print.depgraph_validation_report <- function(x, ...) {
   cat("<depgraph_validation_report>")
   if (!is.null(x$graph_name) && nzchar(x$graph_name)) {
@@ -311,14 +333,17 @@ print.depgraph_validation_report <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.depgraph_validation_report <- function(object, ...) {
   object$summary
 }
 
+#' @export
 as.data.frame.depgraph_validation_report <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$issues
 }
 
+#' @export
 print.split_spec <- function(x, ...) {
   cat("<split_spec>", x$constraint_mode %||% "<unknown>", "\n")
   cat("  Samples:", nrow(x$sample_data), "\n")
@@ -329,6 +354,7 @@ print.split_spec <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.split_spec <- function(object, ...) {
   list(
     constraint_mode = object$constraint_mode,
@@ -342,10 +368,12 @@ summary.split_spec <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.split_spec <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$sample_data
 }
 
+#' @export
 print.split_spec_validation <- function(x, ...) {
   cat("<split_spec_validation>\n")
   cat("  Valid:", x$valid, "\n")
@@ -353,14 +381,17 @@ print.split_spec_validation <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.split_spec_validation <- function(object, ...) {
   object$summary
 }
 
+#' @export
 as.data.frame.split_spec_validation <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$issues
 }
 
+#' @export
 print.leakage_risk_summary <- function(x, ...) {
   cat("<leakage_risk_summary>\n")
   cat("  Overview:", paste(x$overview, collapse = " "), "\n")
@@ -368,6 +399,7 @@ print.leakage_risk_summary <- function(x, ...) {
   invisible(x)
 }
 
+#' @export
 summary.leakage_risk_summary <- function(object, ...) {
   list(
     overview = object$overview,
@@ -377,6 +409,7 @@ summary.leakage_risk_summary <- function(object, ...) {
   )
 }
 
+#' @export
 as.data.frame.leakage_risk_summary <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$diagnostics
 }

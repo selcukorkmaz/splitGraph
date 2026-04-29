@@ -601,6 +601,8 @@
   .depgraph_bind_issues(issues)
 }
 
+#' @rdname build_dependency_graph
+#' @export
 validate_graph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
 
@@ -674,6 +676,8 @@ validate_graph <- function(graph, checks = c("ids", "references", "cardinality",
   report
 }
 
+#' @rdname build_dependency_graph
+#' @export
 validate_depgraph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL) {
   if (missing(checks)) {
     return(validate_graph(

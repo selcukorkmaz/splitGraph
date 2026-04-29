@@ -10,6 +10,43 @@
   list(type = "FeatureSet", id_col = "featureset_id", relation = "sample_uses_featureset")
 )
 
+#' Build a Dependency Graph Directly from a Metadata Table
+#'
+#' One-shot convenience builder that auto-detects canonical columns in a
+#' metadata table, creates the corresponding node and edge sets, optionally
+#' derives timepoint ordering from \code{time_index}, and assembles a
+#' \code{dependency_graph}. Columns that are absent or entirely missing are
+#' silently skipped.
+#'
+#' @param meta A \code{data.frame} containing one row per sample and optional
+#'   canonical columns: \code{sample_id} (required), \code{subject_id},
+#'   \code{batch_id}, \code{study_id}, \code{timepoint_id}, \code{time_index},
+#'   \code{assay_id}, \code{featureset_id}, \code{outcome_id}, or
+#'   \code{outcome_value}.
+#' @param columns Optional named character vector passed to
+#'   \code{ingest_metadata()} to rename user columns to canonical names.
+#' @param dataset_name,graph_name Optional metadata labels.
+#' @param outcome_scope Either \code{"sample"} (default) or \code{"subject"}.
+#'   Controls whether outcome edges attach to samples or subjects.
+#' @param time_precedence If \code{TRUE} and \code{time_index} is present,
+#'   derive \code{timepoint_precedes} edges from the ordering of
+#'   \code{time_index}.
+#' @param validate Forwarded to \code{build_dependency_graph()}.
+#' @param validation_overrides Forwarded to \code{build_dependency_graph()}.
+#' @return A validated \code{dependency_graph}.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id  = c("S1", "S2", "S3", "S4"),
+#'   subject_id = c("P1", "P1", "P2", "P2"),
+#'   batch_id   = c("B1", "B2", "B1", "B2"),
+#'   timepoint_id = c("T1", "T2", "T1", "T2"),
+#'   time_index = c(1, 2, 1, 2),
+#'   outcome_value = c(0, 1, 0, 1)
+#' )
+#'
+#' g <- graph_from_metadata(meta, graph_name = "demo")
+#' g
+#' @export
 graph_from_metadata <- function(meta,
                                 columns = NULL,
                                 dataset_name = NULL,

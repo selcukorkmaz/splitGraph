@@ -1,5 +1,21 @@
 # Core package constants and internal helpers for splitGraph.
 
+#' splitGraph: Dataset Dependency Graphs for Leakage-Aware Evaluation
+#'
+#' The \pkg{splitGraph} package provides typed graph objects for representing
+#' dataset structure, sample provenance, and leakage-relevant dependencies in
+#' biomedical evaluation workflows.
+#'
+#' Version 1 is focused on dataset dependency graphs rather than biological
+#' interaction networks. It focuses on making dataset dependency structure
+#' explicit enough to validate, query, and convert into stable split
+#' specifications for leakage-aware evaluation.
+#'
+#' @keywords internal
+#' @importFrom graphics plot
+#' @importFrom igraph ecount graph_from_data_frame vcount
+"_PACKAGE"
+
 .depgraph_schema_version <- "0.1.0"
 
 .depgraph_node_types <- c(

@@ -281,6 +281,46 @@
   unique(edge_ids)
 }
 
+#' Query Dependency Graph Structure
+#'
+#' Query graph neighborhoods, typed nodes and edges, path structure, projected
+#' sample dependency components, and direct shared dependencies within a
+#' \code{dependency_graph}.
+#'
+#' When a \code{samples} subset is supplied, partial matching is not allowed:
+#' unknown sample identifiers raise an error rather than being silently
+#' dropped.
+#'
+#' @param graph A \code{dependency_graph}.
+#' @param node_ids,from,to Node identifiers to use as query seeds or endpoints.
+#' @param edge_types Optional edge types used to filter the traversal graph or
+#'   edge table.
+#' @param node_types Optional node types used to filter node results or allowed
+#'   path members.
+#' @param direction,mode Traversal direction.
+#' @param ids Optional node identifiers used to further restrict
+#'   \code{query_node_type()}.
+#' @param max_length Maximum path length for \code{query_paths()}.
+#' @param via Dependency node types used for sample-level dependency detection.
+#' @param min_size Minimum component size retained by
+#'   \code{detect_dependency_components()}.
+#' @param samples Optional sample identifiers or sample node IDs used to
+#'   restrict direct shared-dependency detection. All requested samples must
+#'   resolve successfully.
+#' @return Each function returns a \code{graph_query_result}. Use
+#'   \code{as.data.frame()} to obtain the tidy result table.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id  = c("S1", "S2", "S3"),
+#'   subject_id = c("P1", "P1", "P2"),
+#'   batch_id   = c("B1", "B2", "B1")
+#' )
+#' g <- graph_from_metadata(meta)
+#'
+#' query_node_type(g, "Sample")
+#' query_neighbors(g, "sample:S1", direction = "out")
+#' detect_shared_dependencies(g, via = "Subject")
+#' @export
 query_node_type <- function(graph, node_types, ids = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   node_types <- unique(vapply(node_types, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
@@ -301,6 +341,8 @@ query_node_type <- function(graph, node_types, ids = NULL) {
   )
 }
 
+#' @rdname query_node_type
+#' @export
 query_edge_type <- function(graph, edge_types, node_ids = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   edge_types <- unique(as.character(edge_types))
@@ -321,6 +363,8 @@ query_edge_type <- function(graph, edge_types, node_ids = NULL) {
   )
 }
 
+#' @rdname query_node_type
+#' @export
 query_neighbors <- function(graph, node_ids, edge_types = NULL, node_types = NULL, direction = c("out", "in", "all")) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   direction <- match.arg(direction)
@@ -400,6 +444,8 @@ query_neighbors <- function(graph, node_ids, edge_types = NULL, node_types = NUL
   )
 }
 
+#' @rdname query_node_type
+#' @export
 query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, mode = c("out", "in", "all"), max_length = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- match.arg(mode)
@@ -447,6 +493,8 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
   )
 }
 
+#' @rdname query_node_type
+#' @export
 query_shortest_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, mode = c("out", "in", "all")) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- match.arg(mode)
@@ -494,6 +542,8 @@ query_shortest_paths <- function(graph, from, to, edge_types = NULL, node_types 
   )
 }
 
+#' @rdname query_node_type
+#' @export
 detect_dependency_components <- function(graph, via = c("Subject", "Batch", "Study", "Timepoint", "Assay", "FeatureSet", "Outcome"), edge_types = NULL, min_size = 1) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   shared <- .depgraph_shared_dependency_table(graph, via = via, edge_types = edge_types)
@@ -555,6 +605,8 @@ detect_dependency_components <- function(graph, via = c("Subject", "Batch", "Stu
   )
 }
 
+#' @rdname query_node_type
+#' @export
 detect_shared_dependencies <- function(graph, via = c("Subject", "Batch", "Study", "Timepoint"), samples = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   table <- .depgraph_shared_dependency_table(graph, via = via, samples = samples)

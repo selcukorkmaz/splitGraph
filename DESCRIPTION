@@ -8,26 +8,23 @@ Authors@R: c(
 Description: Represent biomedical dataset structure as typed dependency
     graphs so that sample provenance, repeated-measure structure, study
     design, batch effects, and temporal relationships are explicit and
-    inspectable. The package supports canonical metadata ingestion, node and
-    edge construction, graph validation, dependency queries, sample-level
-    overlap detection, derivation of deterministic split constraints, and
-    generation of stable split specifications for trustworthy model
-    evaluation workflows.
+    inspectable. Validates dataset structure, detects sample-level overlap,
+    derives deterministic split constraints, and produces a tool-agnostic
+    split specification for leakage-aware evaluation workflows.
 License: MIT + file LICENSE
 URL: https://github.com/selcukorkmaz/splitGraph
 BugReports: https://github.com/selcukorkmaz/splitGraph/issues
 Encoding: UTF-8
-Depends:
-    R (>= 4.1.0)
-Imports:
-    graphics,
-    igraph
-Suggests:
-    knitr,
-    pkgload,
-    rmarkdown,
-    testthat (>= 3.0.0)
+Depends: R (>= 4.1.0)
+Imports: graphics, igraph
+Suggests: knitr, pkgload, rmarkdown, testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 NeedsCompilation: no
 RoxygenNote: 7.3.3
+Packaged: 2026-04-14 21:44:56 UTC; selcuk
+Author: Selcuk Korkmaz [aut, cre] (ORCID:
+    <https://orcid.org/0000-0003-4632-6850>)
+Maintainer: Selcuk Korkmaz <selcukorkmaz@gmail.com>
+Repository: CRAN
+Date/Publication: 2026-04-21 09:20:01 UTC

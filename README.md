@@ -58,7 +58,7 @@ correct while still violating the intended scientific separation.
 
 - fit models or run preprocessing pipelines
 - generate resamples (`rsample` does that)
-- implement leakage-aware *training* workflows (`bioLeak` and `fastml` do)
+- implement leakage-aware *training* workflows or fit models
 - provide a general-purpose graph analytics toolkit
 
 The package is intentionally narrow: dataset dependency structure for
@@ -107,30 +107,25 @@ directly.
 ## Downstream Handoff
 
 `split_spec` is the tool-agnostic handoff object produced by
-`as_split_spec()`. Downstream packages provide their own adapters so that
-`splitGraph` has no runtime dependency on any of them:
+`as_split_spec()`. `splitGraph` does not know about any particular
+resampling package — downstream consumers are expected to provide their own
+adapters so that `splitGraph` stays neutral and has no runtime dependency
+on them.
 
-```r
-# fastml / tidymodels (rsample) — in fastml:
-rset <- fastml::rset_from_split_spec(split_spec, data = my_data, v = 5)
-# then use rset anywhere rsample::vfold_cv() is expected:
-# tune::tune_grid(wflow, resamples = rset, grid = grid, metrics = metrics)
-
-# bioLeak — in bioLeak:
-plan <- bioLeak::as_leaksplits(split_spec, data = my_data,
-                               outcome = "y", v = 5)
-```
-
-Signatures shown match `fastml` 0.7.8 and the current `bioLeak` adapter.
-Consult `?fastml::rset_from_split_spec` or `?bioLeak::as_leaksplits` in your
-installed versions if in doubt.
-
-The typical end-to-end flow is therefore:
+The typical end-to-end flow is:
 
 1. `graph_from_metadata(meta)` → typed `dependency_graph`
 2. `derive_split_constraints(g, mode = ...)` → `split_constraint`
 3. `as_split_spec(constraint, graph = g)` → `split_spec`
-4. adapter call in `fastml` / `bioLeak` / custom wrapper → native resamples
+4. adapter in the downstream package → native resamples
+
+The `sample_data` frame carried by `split_spec` exposes exactly what an
+adapter needs: `sample_id` for joining against the observation frame,
+`group_id` for grouped resampling, `batch_group` / `study_group` for
+blocking, and `order_rank` for ordered evaluation. An adapter can be built
+on top of, for example, `rsample::group_vfold_cv()` (grouped CV keyed to
+`group_id`) or `rsample::rolling_origin()` (ordered evaluation keyed to
+`order_rank`).
 
 ## Core Concepts
 

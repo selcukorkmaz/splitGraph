@@ -550,6 +550,84 @@
   )
 }
 
+#' Derive Split Constraints from Dependency Graphs
+#'
+#' Convert dataset dependency structure into deterministic sample-level
+#' grouping constraints suitable for leakage-aware evaluation design.
+#'
+#' Constraint derivation rules:
+#'
+#' \describe{
+#'   \item{\code{mode = "subject"}}{Groups samples by the target of
+#'   \code{sample_belongs_to_subject}. All samples linked to the same
+#'   \code{Subject} receive the same \code{group_id}.}
+#'
+#'   \item{\code{mode = "batch"}}{Groups samples by the target of
+#'   \code{sample_processed_in_batch}. Samples with no batch assignment are
+#'   retained as singleton unlinked groups and recorded in metadata warnings.}
+#'
+#'   \item{\code{mode = "study"}}{Groups samples by the target of
+#'   \code{sample_from_study}.}
+#'
+#'   \item{\code{mode = "time"}}{Groups samples by the target of
+#'   \code{sample_collected_at_timepoint}. When \code{Timepoint} nodes have
+#'   \code{time_index} metadata, that value is used to derive
+#'   \code{order_rank}. If \code{time_index} is unavailable, the function
+#'   attempts to derive ordering from \code{timepoint_precedes} edges over the
+#'   timepoint subgraph.}
+#'
+#'   \item{\code{mode = "composite"}, \code{strategy = "strict"}}{Projects the
+#'   selected dependency relations onto a sample graph and assigns one
+#'   \code{group_id} per connected component. This is the transitive-closure
+#'   interpretation of composite dependency grouping.}
+#'
+#'   \item{\code{mode = "composite"}, \code{strategy = "rule_based"}}{Evaluates
+#'   dependency assignments in deterministic priority order and groups each
+#'   sample by the highest-priority available dependency source.
+#'   Lower-priority available dependencies are retained in the explanation
+#'   field.}
+#' }
+#'
+#' The returned \code{split_constraint$sample_map} always contains
+#' \code{sample_id}, \code{sample_node_id}, \code{group_id},
+#' \code{constraint_type}, \code{group_label}, and \code{explanation}.
+#' Time-aware constraints also include \code{time_index}, \code{timepoint_id},
+#' and \code{order_rank} when available.
+#'
+#' Ambiguous direct assignments are rejected. A sample cannot be assigned to
+#' multiple batches, studies, or timepoints when deriving direct split
+#' constraints.
+#'
+#' @param graph A \code{dependency_graph}.
+#' @param mode Constraint derivation mode.
+#' @param samples Optional sample identifiers or sample node IDs used to
+#'   restrict the returned \code{sample_map}. All requested samples must
+#'   resolve successfully.
+#' @param strategy Composite grouping strategy. Ignored for non-composite
+#'   modes.
+#' @param via Optional dependency sources used for composite grouping. May be
+#'   given as lower-case modes such as \code{"subject"} or node types such as
+#'   \code{"Subject"}.
+#' @param priority Optional priority order used for
+#'   \code{strategy = "rule_based"}.
+#' @param include_warnings Whether to retain human-readable warnings in the
+#'   returned metadata.
+#' @param x A \code{split_constraint}.
+#' @return \code{derive_split_constraints()} returns a \code{split_constraint}
+#'   whose \code{sample_map} contains grouping assignments and, for time-aware
+#'   constraints, ordering metadata. \code{grouping_vector()} returns a named
+#'   character vector of \code{group_id} values keyed by \code{sample_id}.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id  = c("S1", "S2", "S3", "S4"),
+#'   subject_id = c("P1", "P1", "P2", "P2"),
+#'   batch_id   = c("B1", "B2", "B1", "B2")
+#' )
+#' g <- graph_from_metadata(meta)
+#'
+#' constraint <- derive_split_constraints(g, mode = "subject")
+#' grouping_vector(constraint)
+#' @export
 derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- .depgraph_normalize_constraint_mode(match.arg(mode))
@@ -575,6 +653,8 @@ derive_split_constraints <- function(graph, mode = c("subject", "batch", "study"
   result
 }
 
+#' @rdname derive_split_constraints
+#' @export
 grouping_vector <- function(x) {
   .depgraph_assert(inherits(x, "split_constraint"), "`x` must be a `split_constraint`.")
   groups <- as.character(x$sample_map$group_id)

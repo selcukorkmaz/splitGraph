@@ -1,5 +1,23 @@
 # Metadata ingestion and canonical node/edge builders.
 
+#' Standardize Sample Metadata
+#'
+#' Normalize user-provided metadata into the canonical column contract used by
+#' \pkg{splitGraph}.
+#'
+#' @param data A sample-level \code{data.frame}.
+#' @param col_map Optional named character vector mapping canonical names to
+#'   user-provided columns.
+#' @param dataset_name Optional dataset label stored as an attribute on the
+#'   returned table.
+#' @param strict If \code{TRUE}, error when required columns are missing.
+#' @return A standardized \code{data.frame} with canonical identifier columns
+#'   coerced to character.
+#' @examples
+#' meta <- ingest_metadata(
+#'   data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2"))
+#' )
+#' @export
 ingest_metadata <- function(data, col_map = NULL, dataset_name = NULL, strict = TRUE) {
   .depgraph_assert(is.data.frame(data), "`data` must be a data.frame.")
 
@@ -40,6 +58,55 @@ ingest_metadata <- function(data, col_map = NULL, dataset_name = NULL, strict = 
   out
 }
 
+#' Create Canonical Node and Edge Tables
+#'
+#' Build canonical node and edge tables from ordinary metadata frames.
+#'
+#' The package uses typed node identifiers such as \code{sample:S1} as the
+#' canonical graph representation. If you create node sets with
+#' \code{prefix = FALSE}, the corresponding edge endpoints must use matching
+#' prefix settings via \code{from_prefix} and \code{to_prefix}.
+#'
+#' When \code{dedupe = TRUE}, exact duplicate node or edge definitions are
+#' collapsed, but conflicting definitions for the same canonical node
+#' identifier or edge relation are rejected with an error.
+#'
+#' @param data A \code{data.frame} containing entity or relationship columns.
+#' @param type,from_type,to_type Supported node types such as \code{"Sample"}
+#'   or \code{"Subject"}.
+#' @param id_col Column containing the source identifier for the node type.
+#' @param label_col Optional column used for node labels.
+#' @param attr_cols Optional columns stored in the \code{attrs} list-column.
+#' @param prefix If \code{TRUE}, prepend typed prefixes such as \code{sample:}
+#'   to node identifiers.
+#' @param dedupe If \code{TRUE}, collapse duplicate identifiers or duplicate
+#'   edges only when the retained definition is identical.
+#' @param from_col,to_col Source and target identifier columns for edge
+#'   creation.
+#' @param relation Canonical edge type.
+#' @param allow_missing If \code{TRUE}, drop rows with missing edge endpoints
+#'   instead of erroring.
+#' @param from_prefix,to_prefix Whether to prepend typed prefixes when
+#'   constructing the edge endpoint identifiers. Defaults preserve the
+#'   canonical prefixed-ID format.
+#' @return For \code{create_nodes()}, a \code{graph_node_set}. For
+#'   \code{create_edges()}, a \code{graph_edge_set}.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id = c("S1", "S2"),
+#'   subject_id = c("P1", "P2")
+#' )
+#'
+#' samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
+#' edges <- create_edges(
+#'   meta,
+#'   from_col = "sample_id",
+#'   to_col = "subject_id",
+#'   from_type = "Sample",
+#'   to_type = "Subject",
+#'   relation = "sample_belongs_to_subject"
+#' )
+#' @export
 create_nodes <- function(data, type, id_col, label_col = NULL, attr_cols = NULL, prefix = TRUE, dedupe = TRUE) {
   .depgraph_assert(is.data.frame(data), "`data` must be a data.frame.")
   .depgraph_assert(id_col %in% names(data), paste0("Missing `id_col`: ", id_col))
@@ -94,6 +161,8 @@ create_nodes <- function(data, type, id_col, label_col = NULL, attr_cols = NULL,
   graph_node_set(node_data, source = list(type = type, id_col = id_col))
 }
 
+#' @rdname create_nodes
+#' @export
 create_edges <- function(data, from_col, to_col, from_type, to_type, relation, attr_cols = NULL, allow_missing = FALSE, dedupe = TRUE, from_prefix = TRUE, to_prefix = TRUE) {
   .depgraph_assert(is.data.frame(data), "`data` must be a data.frame.")
   .depgraph_assert(from_col %in% names(data), paste0("Missing `from_col`: ", from_col))
