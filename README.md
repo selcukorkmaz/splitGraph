@@ -44,13 +44,17 @@ correct while still violating the intended scientific separation.
 - one-shot graph construction from canonical metadata via
   `graph_from_metadata()`
 - typed node and edge constructors backed by `igraph`
-- structural, semantic, and leakage-relevant validation
-- typed query and traversal helpers
+- structural, semantic, and leakage-relevant validation, with a documented
+  `validation_overrides` mechanism for explicit exceptions
+- typed query and traversal helpers (with a safety cap on `query_paths()`)
 - projected sample-dependency detection
 - split-constraint derivation for subject, batch, study, time, and composite
   modes
 - translation of constraints into a stable, tool-agnostic `split_spec`
 - split-spec preflight validation and leakage summary helpers
+- JSON serialization for `dependency_graph` and `split_spec` so handoff
+  objects are portable across sessions and languages (`write_*()` /
+  `read_*()`, requires `jsonlite`)
 - typed layered `plot()` method with per-type colors and a node-type legend
 - `print()`, `summary()`, and `as.data.frame()` on all core S3 objects
 
@@ -58,7 +62,7 @@ correct while still violating the intended scientific separation.
 
 - fit models or run preprocessing pipelines
 - generate resamples (`rsample` does that)
-- implement leakage-aware *training* workflows or fit models
+- implement leakage-aware *training* workflows
 - provide a general-purpose graph analytics toolkit
 
 The package is intentionally narrow: dataset dependency structure for
@@ -66,11 +70,17 @@ leakage-aware evaluation design.
 
 ## Installation
 
-Development version from GitHub:
+From GitHub:
 
 ```r
 install.packages("remotes")
 remotes::install_github("selcukorkmaz/splitGraph")
+```
+
+To use the JSON serialization API, also install `jsonlite`:
+
+```r
+install.packages("jsonlite")
 ```
 
 ## Quick Start
@@ -87,7 +97,7 @@ meta <- data.frame(
   batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
   timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
   time_index   = c(0, 1, 0, 1, 0, 1),
-  outcome_value = c(0, 1, 0, 1, 1, 0)
+  outcome_id   = c("ctrl", "case", "ctrl", "case", "case", "ctrl")
 )
 
 g <- graph_from_metadata(meta, graph_name = "demo")
@@ -95,14 +105,24 @@ plot(g)
 
 validation <- validate_graph(g)
 subject_constraint <- derive_split_constraints(g, mode = "subject")
-split_spec <- as_split_spec(subject_constraint, graph = g)
-validate_split_spec(split_spec)
-summarize_leakage_risks(g, constraint = subject_constraint, split_spec = split_spec)
+spec <- as_split_spec(subject_constraint, graph = g)
+validate_split_spec(spec)
+summarize_leakage_risks(g, constraint = subject_constraint, split_spec = spec)
+
+# Persist the spec for a downstream consumer (R or non-R):
+path <- tempfile(fileext = ".json")
+write_split_spec(spec, path)
+spec2 <- read_split_spec(path)
 ```
 
-For full control over node labels, attribute columns, and non-canonical
-relations, use `create_nodes()` / `create_edges()` / `build_dependency_graph()`
-directly.
+For full control over node labels, attribute columns, and the feature-set
+provenance edges, use `create_nodes()` / `create_edges()` /
+`build_dependency_graph()` directly. `graph_from_metadata()` auto-builds
+the six sample-rooted canonical edges, `timepoint_precedes`, and the
+appropriate outcome edge (`sample_has_outcome` by default, or
+`subject_has_outcome` when `outcome_scope = "subject"`). The
+`featureset_generated_from_study` and `featureset_generated_from_batch`
+edges always require the explicit constructor path.
 
 ## Downstream Handoff
 
@@ -117,7 +137,9 @@ The typical end-to-end flow is:
 1. `graph_from_metadata(meta)` → typed `dependency_graph`
 2. `derive_split_constraints(g, mode = ...)` → `split_constraint`
 3. `as_split_spec(constraint, graph = g)` → `split_spec`
-4. adapter in the downstream package → native resamples
+4. (optional) `write_split_spec(spec, path)` → JSON, for cross-session or
+   cross-language handoff
+5. adapter in the downstream package → native resamples
 
 The `sample_data` frame carried by `split_spec` exposes exactly what an
 adapter needs: `sample_id` for joining against the observation frame,
@@ -126,6 +148,14 @@ blocking, and `order_rank` for ordered evaluation. An adapter can be built
 on top of, for example, `rsample::group_vfold_cv()` (grouped CV keyed to
 `group_id`) or `rsample::rolling_origin()` (ordered evaluation keyed to
 `order_rank`).
+
+For three small, self-contained adapter examples (a base-R LOGO adapter,
+plus illustrative `rsample::group_vfold_cv()` and `rsample::rolling_origin()`
+adapters), see the **Adapter cookbook** vignette:
+
+```r
+vignette("adapter-cookbook", package = "splitGraph")
+```
 
 ## Core Concepts
 
@@ -159,10 +189,11 @@ on top of, for example, `rsample::group_vfold_cv()` (grouped CV keyed to
 | Layer | Functions |
 |---|---|
 | Ingestion and construction | `ingest_metadata()`, `graph_from_metadata()`, `create_nodes()`, `create_edges()`, `build_dependency_graph()`, `dependency_graph()`, `as_igraph()` |
-| Validation | `validate_graph()`, `validate_split_spec()` |
-| Queries | `query_node_type()`, `query_edge_type()`, `query_neighbors()`, `query_paths()`, `query_shortest_paths()`, `detect_dependency_components()`, `detect_shared_dependencies()` |
+| Validation | `validate_graph()` (with `validation_overrides`), `validate_split_spec()` |
+| Queries | `query_node_type()`, `query_edge_type()`, `query_neighbors()`, `query_paths()` (capped by default), `query_shortest_paths()`, `detect_dependency_components()`, `detect_shared_dependencies()` |
 | Constraint derivation | `derive_split_constraints()`, `grouping_vector()` |
 | Split-spec translation | `as_split_spec()`, `summarize_leakage_risks()` |
+| Serialization (JSON) | `write_dependency_graph()`, `read_dependency_graph()`, `write_split_spec()`, `read_split_spec()` |
 
 ## Example Queries
 
@@ -193,6 +224,29 @@ rule_based_composite <- derive_split_constraints(
 )
 ```
 
+## Serialization (JSON)
+
+Both core handoff objects can be written to a stable, schema-versioned
+JSON format and read back, so a `dependency_graph` or `split_spec` is
+portable across R sessions and across language boundaries.
+
+```r
+graph_path <- tempfile(fileext = ".json")
+spec_path  <- tempfile(fileext = ".json")
+
+write_dependency_graph(g, graph_path)
+write_split_spec(spec, spec_path)
+
+g2    <- read_dependency_graph(graph_path)
+spec2 <- read_split_spec(spec_path)
+```
+
+The JSON schema is documented under `?write_dependency_graph` and
+`?write_split_spec`. Each file carries a `schema_version` field; reading a
+file written under a different schema version emits a warning but still
+loads. `NA` values in `sample_data` round-trip as JSON `null`. The
+`jsonlite` package (a `Suggests` dep) must be installed.
+
 ## Plot Method
 
 `plot(g)` renders a typed, layered layout with per-type node colors and an
@@ -218,7 +272,7 @@ citation("splitGraph")
 produces:
 
 > Korkmaz S (2026). *splitGraph: Dataset Dependency Graphs for
-> Leakage-Aware Evaluation*. R package version 0.1.0.
+> Leakage-Aware Evaluation*. R package version 0.2.0.
 > <https://github.com/selcukorkmaz/splitGraph>
 
 ## License
@@ -235,3 +289,10 @@ The package prefers explicit failure over silent guessing. In particular:
   arbitrarily
 - validation truth is not changed by severity filters, and generated
   split specs are re-validated against the package's own preflight rules
+- documented exceptions go through `validation_overrides` (e.g.
+  `allow_multi_subject_samples`); the same override is honored by both
+  `validate_graph()` and `derive_split_constraints(mode = "subject")`
+- `query_paths()` defaults to a finite path-length cap so traversal cannot
+  explode on dense graphs; pass `max_length = Inf` to opt out
+- the on-disk JSON format is schema-versioned, and loading a file with a
+  different `schema_version` warns rather than failing silently

@@ -1,6 +1,6 @@
 Package: splitGraph
 Title: Dataset Dependency Graphs for Leakage-Aware Evaluation
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: c(
     person("Selcuk", "Korkmaz", role = c("aut","cre"), email = "selcukorkmaz@gmail.com",
            comment = c(ORCID = "0000-0003-4632-6850"))
@@ -17,7 +17,7 @@ BugReports: https://github.com/selcukorkmaz/splitGraph/issues
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
 Imports: graphics, igraph
-Suggests: knitr, pkgload, rmarkdown, testthat (>= 3.0.0)
+Suggests: jsonlite, knitr, pkgload, rmarkdown, testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 NeedsCompilation: no

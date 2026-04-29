@@ -106,7 +106,7 @@ quick_graph <- graph_from_metadata(
     batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
     timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
     time_index   = c(0, 1, 0, 1, 0, 1),
-    outcome_value = c(0, 1, 0, 1, 1, 0)
+    outcome_id   = c("ctrl", "case", "ctrl", "case", "case", "ctrl")
   ),
   graph_name = "quick_demo"
 )
@@ -114,12 +114,20 @@ quick_graph <- graph_from_metadata(
 quick_graph
 ```
 
+If you pass `outcome_value` as a numeric column (e.g. `0`/`1`), the package
+will create one `Outcome` node per distinct numeric value (`outcome:0`,
+`outcome:1`) and emit a warning. For most workflows you want a character
+class label, so prefer `outcome_id`.
+
 The rest of this vignette uses the explicit constructor path because it lets
 us show node attributes (`time_index`, `visit_label`, `platform`,
-`derivation_scope`) and non-canonical edges (`featureset_generated_from_*`,
-`subject_has_outcome`) that `graph_from_metadata()` does not build for you.
-Use `graph_from_metadata()` when the canonical columns are enough; use the
-explicit path when you need custom attributes or extra relations.
+`derivation_scope`) and edges that `graph_from_metadata()` does not build
+for you on its own — specifically `featureset_generated_from_study` and
+`featureset_generated_from_batch`. (`subject_has_outcome` is the one
+non-default outcome edge `graph_from_metadata()` will build for you when
+you pass `outcome_scope = "subject"`.) Use `graph_from_metadata()` when
+the canonical columns are enough; use the explicit path when you need
+custom attributes or feature-provenance edges.
 
 ## Ingest metadata and build typed nodes and edges
 
@@ -364,6 +372,81 @@ tryCatch(
 
 That behavior is important in practice because quietly omitting samples would
 change the truth of the split problem.
+
+### When you really do need to relax a check
+
+Some leakage-relevant rules have legitimate exceptions. For example, in
+some pooled designs a single biological "sample" is intentionally paired
+across two subjects. The semantic validator flags this as an error by
+default, and `derive_split_constraints(mode = "subject")` refuses to
+choose a subject for you — both consistent with the "no silent guessing"
+stance.
+
+To make the contrast concrete, build a tiny graph in which sample `S1`
+is linked to two subjects:
+
+```{r overrides-fixture}
+multi_nodes <- graph_node_set(data.frame(
+  node_id   = c("sample:S1", "subject:P1", "subject:P2"),
+  node_type = c("Sample", "Subject", "Subject"),
+  node_key  = c("S1", "P1", "P2"),
+  label     = c("S1", "P1", "P2"),
+  attrs     = I(list(list(), list(), list())),
+  stringsAsFactors = FALSE
+))
+
+multi_edges <- graph_edge_set(data.frame(
+  edge_id   = c("sample_belongs_to_subject:1", "sample_belongs_to_subject:2"),
+  from      = c("sample:S1", "sample:S1"),
+  to        = c("subject:P1", "subject:P2"),
+  edge_type = c("sample_belongs_to_subject", "sample_belongs_to_subject"),
+  attrs     = I(list(list(), list())),
+  stringsAsFactors = FALSE
+))
+
+multi_graph <- dependency_graph(nodes = multi_nodes, edges = multi_edges)
+```
+
+Default behavior — the validator surfaces the multi-subject sample as an
+error, and constraint derivation refuses to pick a subject:
+
+```{r overrides-default}
+default_report <- validate_graph(multi_graph)
+default_report$valid
+default_report$issues[, c("severity", "code", "message")]
+
+tryCatch(
+  derive_split_constraints(multi_graph, mode = "subject"),
+  error = function(e) e$message
+)
+```
+
+When the ambiguity is intended, opt in explicitly via
+`validation_overrides`. The same key
+(`allow_multi_subject_samples = TRUE`) is honored by both the validator
+and the constraint deriver:
+
+```{r overrides-on}
+# Validator: pass.
+permissive_report <- validate_graph(
+  multi_graph,
+  validation_overrides = list(allow_multi_subject_samples = TRUE)
+)
+permissive_report$valid
+
+# Constraint derivation: pick the first listed subject and record the
+# ambiguity in metadata$warnings instead of erroring.
+multi_graph$metadata$validation_overrides <-
+  list(allow_multi_subject_samples = TRUE)
+relaxed_constraint <- derive_split_constraints(multi_graph, mode = "subject")
+relaxed_constraint$sample_map[, c("sample_id", "group_id")]
+relaxed_constraint$metadata$warnings
+```
+
+The override is documented under `?validate_graph`. Use it sparingly and
+only when the relaxation matches your scientific intent — the message in
+`metadata$warnings` is the audit trail that the choice was tolerated, not
+hidden.
 
 ## Query the graph to inspect hidden structure
 
@@ -624,7 +707,9 @@ flow is:
    `dependency_graph`
 2. `derive_split_constraints(g, mode = ...)` → `split_constraint`
 3. `as_split_spec(constraint, graph = g)` → `split_spec`
-4. adapter in the downstream package → native resamples
+4. (optional) `write_split_spec(spec, path)` → JSON, for cross-session or
+   cross-language handoff
+5. adapter in the downstream package → native resamples
 
 The `sample_data` frame carried by `split_spec` exposes exactly the columns
 downstream adapters consume: `sample_id` for joining against the observation
@@ -633,6 +718,33 @@ blocking, and `order_rank` for ordered evaluation. Adapters can be built by
 any package that wants to consume a `split_spec` — for example, on top of
 `rsample::group_vfold_cv()` (grouped CV keyed to `group_id`) or
 `rsample::rolling_origin()` (ordered evaluation keyed to `order_rank`).
+
+### Persisting the handoff
+
+If the downstream consumer is in a different R session — or in a
+different language entirely — write the spec (and, if useful, the graph)
+to JSON. The format is documented under `?write_split_spec` and
+`?write_dependency_graph`, carries a `schema_version` field, and
+preserves `NA` values as JSON `null`.
+
+```{r serialize, eval = requireNamespace("jsonlite", quietly = TRUE)}
+spec_path <- tempfile(fileext = ".json")
+write_split_spec(split_spec, spec_path)
+
+# Round-trip it back into R unchanged.
+spec_round_trip <- read_split_spec(spec_path)
+identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
+
+unlink(spec_path)
+```
+
+For three small worked examples of consuming a `split_spec` from
+downstream code (a base-R leave-one-group-out adapter and illustrative
+`rsample` adapters), see the companion vignette:
+
+```{r cookbook-pointer, eval = FALSE}
+vignette("adapter-cookbook", package = "splitGraph")
+```
 
 ## Case studies
 

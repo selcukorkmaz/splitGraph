@@ -3,3 +3,6 @@
 
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.claude$
+^splitGraph\.Rcheck$
+^splitGraph_.*\.tar\.gz$

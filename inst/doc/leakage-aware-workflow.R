@@ -19,6 +19,7 @@ or_empty <- function(x) {
   if (is.null(x)) character() else x
 }
 
+
 ## ----metadata-----------------------------------------------------------------
 meta <- data.frame(
   sample_id = c("S1", "S2", "S3", "S4", "S5", "S6"),
@@ -34,6 +35,7 @@ meta <- data.frame(
 
 meta
 
+
 ## ----fast-path----------------------------------------------------------------
 quick_graph <- graph_from_metadata(
   data.frame(
@@ -42,12 +44,13 @@ quick_graph <- graph_from_metadata(
     batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
     timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
     time_index   = c(0, 1, 0, 1, 0, 1),
-    outcome_value = c(0, 1, 0, 1, 1, 0)
+    outcome_id   = c("ctrl", "case", "ctrl", "case", "case", "ctrl")
   ),
   graph_name = "quick_demo"
 )
 
 quick_graph
+
 
 ## ----construction-------------------------------------------------------------
 meta <- ingest_metadata(meta, dataset_name = "VignetteDemo")
@@ -179,6 +182,7 @@ featureset_from_batch <- create_edges(
   "FeatureSet", "Batch", "featureset_generated_from_batch"
 )
 
+
 ## ----construction-output------------------------------------------------------
 sample_nodes
 as.data.frame(sample_nodes)[, c("node_id", "node_type", "node_key", "label")]
@@ -193,6 +197,7 @@ edge_preview <- do.call(rbind, lapply(
 ))
 
 edge_preview[, c("from", "to", "edge_type")]
+
 
 ## ----graph--------------------------------------------------------------------
 graph <- build_dependency_graph(
@@ -212,8 +217,10 @@ graph <- build_dependency_graph(
 graph
 summary(graph)
 
+
 ## ----plot, fig.width = 7, fig.height = 5--------------------------------------
 plot(graph)
+
 
 ## ----plot-options, eval = FALSE-----------------------------------------------
 # plot(graph, layout = "sugiyama")         # alternative hierarchical layout
@@ -222,17 +229,70 @@ plot(graph)
 # plot(graph, legend_position = "bottomright")
 # plot(graph, node_colors = c(Sample = "#000000"))
 
+
 ## ----validation---------------------------------------------------------------
 validation <- validate_graph(graph)
 
 validation
 as.data.frame(validation)[, c("level", "severity", "code", "message")]
 
+
 ## ----strictness---------------------------------------------------------------
 tryCatch(
   derive_split_constraints(graph, mode = "subject", samples = c("S1", "BAD")),
   error = function(e) e$message
 )
+
+
+## ----overrides-fixture--------------------------------------------------------
+multi_nodes <- graph_node_set(data.frame(
+  node_id   = c("sample:S1", "subject:P1", "subject:P2"),
+  node_type = c("Sample", "Subject", "Subject"),
+  node_key  = c("S1", "P1", "P2"),
+  label     = c("S1", "P1", "P2"),
+  attrs     = I(list(list(), list(), list())),
+  stringsAsFactors = FALSE
+))
+
+multi_edges <- graph_edge_set(data.frame(
+  edge_id   = c("sample_belongs_to_subject:1", "sample_belongs_to_subject:2"),
+  from      = c("sample:S1", "sample:S1"),
+  to        = c("subject:P1", "subject:P2"),
+  edge_type = c("sample_belongs_to_subject", "sample_belongs_to_subject"),
+  attrs     = I(list(list(), list())),
+  stringsAsFactors = FALSE
+))
+
+multi_graph <- dependency_graph(nodes = multi_nodes, edges = multi_edges)
+
+
+## ----overrides-default--------------------------------------------------------
+default_report <- validate_graph(multi_graph)
+default_report$valid
+default_report$issues[, c("severity", "code", "message")]
+
+tryCatch(
+  derive_split_constraints(multi_graph, mode = "subject"),
+  error = function(e) e$message
+)
+
+
+## ----overrides-on-------------------------------------------------------------
+# Validator: pass.
+permissive_report <- validate_graph(
+  multi_graph,
+  validation_overrides = list(allow_multi_subject_samples = TRUE)
+)
+permissive_report$valid
+
+# Constraint derivation: pick the first listed subject and record the
+# ambiguity in metadata$warnings instead of erroring.
+multi_graph$metadata$validation_overrides <-
+  list(allow_multi_subject_samples = TRUE)
+relaxed_constraint <- derive_split_constraints(multi_graph, mode = "subject")
+relaxed_constraint$sample_map[, c("sample_id", "group_id")]
+relaxed_constraint$metadata$warnings
+
 
 ## ----neighbors-and-paths------------------------------------------------------
 neighbors_s1 <- query_neighbors(graph, node_ids = "sample:S1", direction = "out")
@@ -248,6 +308,7 @@ subject_outcome_path <- query_shortest_paths(
 
 subject_outcome_path
 as.data.frame(subject_outcome_path)
+
 
 ## ----projected-dependencies---------------------------------------------------
 shared_dependencies <- detect_shared_dependencies(
@@ -265,6 +326,7 @@ dependency_components <- detect_dependency_components(
 )
 
 as.data.frame(dependency_components)
+
 
 ## ----constraints--------------------------------------------------------------
 subject_constraint <- derive_split_constraints(graph, mode = "subject")
@@ -310,13 +372,16 @@ row.names(constraint_overview) <- NULL
 
 constraint_overview
 
+
 ## ----batch-constraint---------------------------------------------------------
 batch_constraint
 as.data.frame(batch_constraint)[, c("sample_id", "group_id", "group_label", "explanation")]
 
+
 ## ----time-constraint----------------------------------------------------------
 time_constraint
 as.data.frame(time_constraint)[, c("sample_id", "group_id", "timepoint_id", "order_rank")]
+
 
 ## ----composite-constraints----------------------------------------------------
 strict_constraint
@@ -324,6 +389,7 @@ as.data.frame(strict_constraint)[, c("sample_id", "group_id", "constraint_type")
 
 rule_based_constraint
 as.data.frame(rule_based_constraint)[, c("sample_id", "group_id", "constraint_type", "group_label")]
+
 
 ## ----precedence-only----------------------------------------------------------
 precedence_meta <- data.frame(
@@ -376,6 +442,7 @@ precedence_time_constraint <- derive_split_constraints(precedence_graph, mode = 
 precedence_time_constraint$metadata$time_order_source
 as.data.frame(precedence_time_constraint)[, c("sample_id", "timepoint_id", "time_index", "order_rank")]
 
+
 ## ----split-spec---------------------------------------------------------------
 split_spec <- as_split_spec(strict_constraint, graph = graph)
 split_spec
@@ -388,6 +455,7 @@ split_spec_validation <- validate_split_spec(split_spec)
 split_spec_validation
 as.data.frame(split_spec_validation)
 
+
 ## ----risk-summary-------------------------------------------------------------
 risk_summary <- summarize_leakage_risks(
   graph,
@@ -398,12 +466,29 @@ risk_summary <- summarize_leakage_risks(
 risk_summary
 as.data.frame(risk_summary)[, c("source", "severity", "category", "message")]
 
+
+## ----serialize, eval = requireNamespace("jsonlite", quietly = TRUE)-----------
+spec_path <- tempfile(fileext = ".json")
+write_split_spec(split_spec, spec_path)
+
+# Round-trip it back into R unchanged.
+spec_round_trip <- read_split_spec(spec_path)
+identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
+
+unlink(spec_path)
+
+
+## ----cookbook-pointer, eval = FALSE-------------------------------------------
+# vignette("adapter-cookbook", package = "splitGraph")
+
+
 ## ----case-study-1-------------------------------------------------------------
 subject_groups <- grouping_vector(subject_constraint)
 time_groups <- time_constraint$sample_map[, c("sample_id", "group_id", "timepoint_id", "order_rank")]
 
 subject_groups
 time_groups
+
 
 ## ----case-study-2-------------------------------------------------------------
 cross_study_issues <- as.data.frame(validation)[
@@ -425,6 +510,7 @@ as.data.frame(p2_shared)
 study_only_map[study_only_map$sample_id %in% c("S3", "S6"), ]
 strict_map[strict_map$sample_id %in% c("S3", "S6"), ]
 
+
 ## ----case-study-3-------------------------------------------------------------
 batch_missing <- batch_constraint$sample_map[
   batch_constraint$sample_map$sample_id == "S5",
@@ -444,6 +530,7 @@ split_spec_missing <- as.data.frame(split_spec)[
 batch_missing
 rule_based_missing
 split_spec_missing
+
 
 ## ----case-study-4-------------------------------------------------------------
 strategy_summary <- data.frame(

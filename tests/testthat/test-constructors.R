@@ -31,14 +31,18 @@ test_that("compatibility aliases delegate to the primary constructors", {
   )
 
   samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
-  subjects <- new_depgraph_nodes(create_nodes(meta, type = "Subject", id_col = "subject_id")$data)
-  edges <- new_depgraph_edges(
-    create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject")$data
-  )
-  full_nodes <- new_depgraph_nodes(rbind(samples$data, subjects$data))
+  # The aliases are deprecated as of 0.2.0; deprecation warnings are tested
+  # in test-deprecations.R, so silence them here while we verify delegation.
+  suppressWarnings({
+    subjects <- new_depgraph_nodes(create_nodes(meta, type = "Subject", id_col = "subject_id")$data)
+    edges <- new_depgraph_edges(
+      create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject")$data
+    )
+    full_nodes <- new_depgraph_nodes(rbind(samples$data, subjects$data))
 
-  graph <- new_depgraph(nodes = full_nodes, edges = edges)
-  graph2 <- build_depgraph(nodes = list(samples, subjects), edges = list(edges))
+    graph <- new_depgraph(nodes = full_nodes, edges = edges)
+    graph2 <- build_depgraph(nodes = list(samples, subjects), edges = list(edges))
+  })
 
   expect_s3_class(subjects, "graph_node_set")
   expect_s3_class(edges, "graph_edge_set")

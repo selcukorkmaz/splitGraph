@@ -603,8 +603,28 @@
 
 #' @rdname build_dependency_graph
 #' @export
-validate_graph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL) {
+validate_graph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL, validation_overrides = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
+
+  if (!missing(checks)) {
+    .Deprecated(
+      msg = paste0(
+        "The `checks` argument of `validate_graph()` is deprecated. ",
+        "Use `levels` and `severities` instead."
+      ),
+      package = "splitGraph"
+    )
+  }
+
+  if (!is.null(validation_overrides)) {
+    .depgraph_assert(
+      is.list(validation_overrides) && (length(validation_overrides) == 0L ||
+        (!is.null(names(validation_overrides)) &&
+           all(nzchar(names(validation_overrides))))),
+      "`validation_overrides` must be a named list."
+    )
+    graph <- .depgraph_with_overrides(graph, validation_overrides)
+  }
 
   selected_levels <- levels
   if (is.null(selected_levels)) {
@@ -678,13 +698,19 @@ validate_graph <- function(graph, checks = c("ids", "references", "cardinality",
 
 #' @rdname build_dependency_graph
 #' @export
-validate_depgraph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL) {
+validate_depgraph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL, validation_overrides = NULL) {
+  .Deprecated(
+    new = "validate_graph",
+    package = "splitGraph",
+    msg = "`validate_depgraph()` is deprecated. Use `validate_graph()` instead."
+  )
   if (missing(checks)) {
     return(validate_graph(
       graph = graph,
       error_on_fail = error_on_fail,
       levels = levels,
-      severities = severities
+      severities = severities,
+      validation_overrides = validation_overrides
     ))
   }
 
@@ -693,6 +719,7 @@ validate_depgraph <- function(graph, checks = c("ids", "references", "cardinalit
     checks = checks,
     error_on_fail = error_on_fail,
     levels = levels,
-    severities = severities
+    severities = severities,
+    validation_overrides = validation_overrides
   )
 }

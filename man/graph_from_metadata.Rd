@@ -55,7 +55,7 @@ meta <- data.frame(
   batch_id   = c("B1", "B2", "B1", "B2"),
   timepoint_id = c("T1", "T2", "T1", "T2"),
   time_index = c(1, 2, 1, 2),
-  outcome_value = c(0, 1, 0, 1)
+  outcome_id = c("ctrl", "case", "ctrl", "case")
 )
 
 g <- graph_from_metadata(meta, graph_name = "demo")

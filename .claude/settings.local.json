@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(R --version)",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"schema-version\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::document\\(\\)\\); cat\\(\"---DOC OK---\\\\n\"\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"validation-overrides\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"deprecations\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"query-paths-cap\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"prefix-mismatch\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"numeric-outcome\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'res <- as.data.frame\\(suppressMessages\\(devtools::test\\(reporter = \"silent\"\\)\\)\\); cat\\(\"FILES:\", length\\(unique\\(res$file\\)\\), \"\\\\nTESTS:\", sum\\(res$nb\\), \"\\\\nFAIL:\", sum\\(res$failed\\), \"\\\\nWARN:\", sum\\(res$warning\\), \"\\\\nSKIP:\", sum\\(res$skipped\\), \"\\\\n\"\\)')",
+      "Bash(Rscript -e 'res <- rcmdcheck::rcmdcheck\\(args = c\\(\"--no-manual\"\\), error_on = \"never\", quiet = TRUE\\); cat\\(\"STATUS:\", res$status, \"\\\\nERRORS:\\\\n\"\\); print\\(res$errors\\); cat\\(\"\\\\nWARNINGS:\\\\n\"\\); print\\(res$warnings\\); cat\\(\"\\\\nNOTES:\\\\n\"\\); print\\(res$notes\\)')",
+      "Bash(Rscript -e 'try\\(pkgbuild::has_build_tools\\(\\)\\); cat\\(\"---\\\\n\"\\); pkg <- pkgload::pkg_install_path\\(\".\"\\); cat\\(\"path:\", pkg, \"\\\\n\"\\)')",
+      "Bash(R CMD build . --no-manual)",
+      "Bash(R CMD build . --no-manual --no-build-vignettes)",
+      "Bash(R CMD check --no-manual --no-vignettes --no-build-vignettes splitGraph_0.2.0.tar.gz)",
+      "Bash(cp \"C:/Users/Selçuk/Documents/GitHub/splitGraph/vignettes/leakage-aware-workflow.Rmd\" \"C:/Users/Selçuk/Documents/GitHub/splitGraph/inst/doc/leakage-aware-workflow.Rmd\")",
+      "Bash(Rscript -e 'knitr::purl\\(\"inst/doc/leakage-aware-workflow.Rmd\", output = \"inst/doc/leakage-aware-workflow.R\", quiet = TRUE\\); cat\\(\"OK\\\\n\"\\)')",
+      "Bash(rm -f splitGraph_0.2.0.tar.gz)",
+      "Bash(rm -rf splitGraph.Rcheck)",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::test\\(filter = \"serialization\", reporter = \"summary\"\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); knitr::purl\\(\"vignettes/adapter-cookbook.Rmd\", output = tempfile\\(fileext = \".R\"\\), quiet = TRUE\\) -> p; src <- readLines\\(p\\); src <- src[!grepl\\(\"^## ----.*eval=FALSE\", src\\)]; tf <- tempfile\\(fileext = \".R\"\\); writeLines\\(src, tf\\); source\\(tf, echo = FALSE\\); cat\\(\"---VIGNETTE OK---\\\\n\"\\)')",
+      "Bash(cp \"C:/Users/Selçuk/Documents/GitHub/splitGraph/vignettes/adapter-cookbook.Rmd\" \"C:/Users/Selçuk/Documents/GitHub/splitGraph/inst/doc/adapter-cookbook.Rmd\")",
+      "Bash(Rscript -e 'knitr::purl\\(\"inst/doc/adapter-cookbook.Rmd\", output = \"inst/doc/adapter-cookbook.R\", quiet = TRUE\\); knitr::purl\\(\"inst/doc/leakage-aware-workflow.Rmd\", output = \"inst/doc/leakage-aware-workflow.R\", quiet = TRUE\\); cat\\(\"OK\\\\n\"\\)')",
+      "Bash(rm -f splitGraph_*.tar.gz)",
+      "Bash(Rscript -e 'cat\\(\"rmarkdown::pandoc_available\\(\\):\", rmarkdown::pandoc_available\\(\\), \"\\\\nrmarkdown::pandoc_version\\(\\):\"\\); try\\(print\\(rmarkdown::pandoc_version\\(\\)\\)\\)')",
+      "Bash(quarto pandoc *)",
+      "Bash(Rscript -e 'cat\\(\"pandoc:\", rmarkdown::pandoc_available\\(\\), \"\\\\nver:\"\\); print\\(rmarkdown::pandoc_version\\(\\)\\)')",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); rmarkdown::render\\(\"inst/doc/adapter-cookbook.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---ADAPTER OK---\\\\n\"\\); rmarkdown::render\\(\"inst/doc/leakage-aware-workflow.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---LEAKAGE OK---\\\\n\"\\)')",
+      "Bash(R CMD check --no-manual splitGraph_0.2.0.tar.gz)",
+      "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); rmarkdown::render\\(\"inst/doc/leakage-aware-workflow.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---LEAKAGE OK---\\\\n\"\\)')",
+      "Bash(grep -nA 3 \"subject_has_outcome\" R/graph-build-auto.R)"
+    ]
+  }
+}

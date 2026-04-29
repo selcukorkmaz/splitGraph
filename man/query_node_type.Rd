@@ -70,7 +70,12 @@ edge table.}
 
 \item{direction, mode}{Traversal direction.}
 
-\item{max_length}{Maximum path length for \code{query_paths()}.}
+\item{max_length}{Maximum path length (number of edges) for
+\code{query_paths()}. Defaults to a documented finite cap
+(\code{8}) so that \code{igraph::all_simple_paths()} cannot blow up
+on dense graphs. Pass \code{Inf} to opt out and search exhaustively;
+pass any non-negative integer for an explicit cap. Negative values and
+non-numeric inputs are rejected.}
 
 \item{via}{Dependency node types used for sample-level dependency detection.}
 

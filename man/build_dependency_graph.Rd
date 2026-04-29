@@ -33,7 +33,8 @@ validate_graph(
   checks = c("ids", "references", "cardinality", "schema", "time"),
   error_on_fail = FALSE,
   levels = NULL,
-  severities = NULL
+  severities = NULL,
+  validation_overrides = NULL
 )
 
 validate_depgraph(
@@ -41,7 +42,8 @@ validate_depgraph(
   checks = c("ids", "references", "cardinality", "schema", "time"),
   error_on_fail = FALSE,
   levels = NULL,
-  severities = NULL
+  severities = NULL,
+  validation_overrides = NULL
 )
 }
 \arguments{
@@ -53,13 +55,24 @@ objects.}
 \item{validate}{If \code{TRUE}, run \code{validate_graph()} before returning.}
 
 \item{validation_overrides}{Optional named list of explicit validation
-exceptions.}
+exceptions. Currently supported keys:
+\describe{
+  \item{\code{allow_multi_subject_samples}}{If \code{TRUE}, the semantic
+    validator does not flag samples linked to multiple subjects, and
+    \code{derive_split_constraints(mode = "subject")} silently keeps the
+    first listed subject assignment (recording the ambiguity in
+    \code{metadata$warnings}). Defaults to \code{FALSE}.}
+}
+When passed to \code{validate_graph()} or \code{validate_depgraph()},
+the override is merged into the graph's existing
+\code{validation_overrides} for the duration of the call only.}
 
 \item{x}{A \code{dependency_graph}.}
 
 \item{graph}{A \code{dependency_graph}.}
 
-\item{checks}{Validation checks to run.}
+\item{checks}{\strong{Deprecated.} Use \code{levels} and \code{severities}
+instead. Retained for backward compatibility with 0.1.0 callers.}
 
 \item{error_on_fail}{If \code{TRUE}, stop when validation errors are found
 across all detected issues from the selected validation levels, even if

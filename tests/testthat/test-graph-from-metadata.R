@@ -5,7 +5,7 @@ test_that("graph_from_metadata auto-detects canonical columns", {
     batch_id     = c("B1", "B2", "B1", "B2"),
     timepoint_id = c("T1", "T2", "T1", "T2"),
     time_index   = c(1, 2, 1, 2),
-    outcome_value = c(0, 1, 0, 1),
+    outcome_id   = c("ctrl", "case", "ctrl", "case"),
     stringsAsFactors = FALSE
   )
 
@@ -40,7 +40,7 @@ test_that("graph_from_metadata supports subject-scope outcome", {
   meta <- data.frame(
     sample_id     = c("S1", "S2", "S3"),
     subject_id    = c("P1", "P2", "P3"),
-    outcome_value = c(0, 1, 0),
+    outcome_id    = c("ctrl", "case", "ctrl"),
     stringsAsFactors = FALSE
   )
 

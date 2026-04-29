@@ -1,0 +1,237 @@
+---
+title: "Adapter cookbook: from split_spec to native resamples"
+author: "Selçuk Korkmaz"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+vignette: >
+  %\VignetteIndexEntry{Adapter cookbook: from split_spec to native resamples}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE
+)
+
+package_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("pkgload", quietly = TRUE) &&
+    file.exists(file.path(package_root, "DESCRIPTION"))) {
+  pkgload::load_all(package_root, export_all = FALSE, helpers = FALSE, quiet = TRUE)
+} else {
+  library(splitGraph)
+}
+```
+
+## What this vignette is for
+
+`splitGraph` ends at a `split_spec` object. It deliberately knows nothing
+about `rsample`, `tidymodels`, or any other resampling engine. The handoff
+contract is the `sample_data` table inside the spec plus a few scalar
+fields (`group_var`, `block_vars`, `time_var`, `ordering_required`,
+`recommended_resampling`).
+
+This cookbook shows three small, self-contained adapters that turn a
+`split_spec` into something a downstream workflow can use:
+
+1. A **base-R adapter** that returns a list of `(train, test)` row-index
+   pairs — runnable here, no extra dependencies.
+2. An **`rsample::group_vfold_cv()`** adapter for grouped cross-validation
+   keyed to `group_id`.
+3. An **`rsample::rolling_origin()`** adapter for ordered evaluation keyed
+   to `order_rank`.
+
+Adapters 2 and 3 show idiomatic glue but are not evaluated in this
+vignette so that `splitGraph` does not pick up `rsample` as a build-time
+dependency.
+
+The same pattern works for any other resampling library you happen to use.
+
+## Build a split_spec to work with
+
+```{r build-spec}
+meta <- data.frame(
+  sample_id    = c("S1", "S2", "S3", "S4", "S5", "S6"),
+  subject_id   = c("P1", "P1", "P2", "P2", "P3", "P3"),
+  batch_id     = c("B1", "B2", "B1", "B2", "B1", "B2"),
+  timepoint_id = c("T0", "T1", "T0", "T1", "T0", "T1"),
+  time_index   = c(0, 1, 0, 1, 0, 1),
+  outcome_id   = c("ctrl", "case", "ctrl", "case", "case", "ctrl"),
+  stringsAsFactors = FALSE
+)
+
+g <- graph_from_metadata(meta, graph_name = "cookbook")
+subject_constraint <- derive_split_constraints(g, mode = "subject")
+spec <- as_split_spec(subject_constraint, graph = g)
+spec
+```
+
+The `sample_data` table is the contract:
+
+```{r show-sample-data}
+as.data.frame(spec)[, c("sample_id", "group_id", "batch_group", "order_rank")]
+```
+
+## Adapter 1 — base R: leave-one-group-out folds
+
+This is the simplest meaningful adapter. It groups by whatever
+`split_spec$group_var` says is the split unit, and returns one held-out
+group per fold.
+
+```{r adapter-base-r}
+logo_folds <- function(spec, observation_data, sample_id_col = "sample_id") {
+  stopifnot(inherits(spec, "split_spec"))
+  if (!sample_id_col %in% names(observation_data)) {
+    stop("`observation_data` must contain a `", sample_id_col, "` column.")
+  }
+
+  joined <- merge(
+    observation_data,
+    spec$sample_data[, c("sample_id", spec$group_var)],
+    by.x = sample_id_col, by.y = "sample_id", sort = FALSE
+  )
+  joined$.row <- seq_len(nrow(joined))
+  groups <- split(joined$.row, joined[[spec$group_var]])
+
+  lapply(names(groups), function(g) {
+    list(
+      group   = g,
+      train   = unlist(groups[setdiff(names(groups), g)], use.names = FALSE),
+      assess  = groups[[g]]
+    )
+  })
+}
+
+# Pretend we have an observation frame keyed by sample_id.
+obs <- data.frame(
+  sample_id = meta$sample_id,
+  x = rnorm(nrow(meta)),
+  y = rbinom(nrow(meta), 1, 0.5)
+)
+
+folds <- logo_folds(spec, obs)
+length(folds)
+folds[[1]]
+```
+
+That is the entire downstream contract: take `spec`, take an observation
+frame, return train/assess index lists. Anything more complicated is
+specific to a resampling library.
+
+## Adapter 2 — `rsample::group_vfold_cv()`
+
+Grouped CV keyed to `group_id`. The downstream package would typically
+ship something like this; the adapter is short enough that you can paste
+it into your own analysis script.
+
+```{r adapter-rsample-group, eval=FALSE}
+spec_to_group_vfold <- function(spec, observation_data,
+                                v = NULL,
+                                sample_id_col = "sample_id") {
+  stopifnot(inherits(spec, "split_spec"))
+  if (!requireNamespace("rsample", quietly = TRUE)) {
+    stop("Install rsample to use this adapter.")
+  }
+
+  joined <- merge(
+    observation_data,
+    spec$sample_data[, c("sample_id", spec$group_var)],
+    by.x = sample_id_col, by.y = "sample_id", sort = FALSE
+  )
+
+  n_groups <- length(unique(joined[[spec$group_var]]))
+  if (is.null(v)) v <- n_groups
+
+  rsample::group_vfold_cv(
+    data  = joined,
+    group = !!spec$group_var,
+    v     = v
+  )
+}
+```
+
+`v = NULL` (the default above) gives leave-one-group-out, which is the
+right default when `splitGraph` has already grouped samples by their
+deepest leakage-relevant unit (e.g. subject). Pick a smaller `v` for
+k-fold-style grouped CV.
+
+## Adapter 3 — `rsample::rolling_origin()`
+
+When `spec$ordering_required` is `TRUE` (or `spec$time_var` is set), the
+right downstream object is an ordered split rather than a grouped one.
+
+```{r adapter-rsample-rolling, eval=FALSE}
+spec_to_rolling_origin <- function(spec, observation_data,
+                                   sample_id_col = "sample_id",
+                                   initial = NULL,
+                                   assess = 1L) {
+  stopifnot(inherits(spec, "split_spec"))
+  if (is.null(spec$time_var)) {
+    stop("This split_spec has no `time_var`; ordered evaluation is not available.")
+  }
+  if (!requireNamespace("rsample", quietly = TRUE)) {
+    stop("Install rsample to use this adapter.")
+  }
+
+  joined <- merge(
+    observation_data,
+    spec$sample_data[, c("sample_id", spec$time_var)],
+    by.x = sample_id_col, by.y = "sample_id", sort = FALSE
+  )
+  ordered <- joined[order(joined[[spec$time_var]]), , drop = FALSE]
+
+  if (is.null(initial)) initial <- max(1L, floor(nrow(ordered) * 0.6))
+  rsample::rolling_origin(ordered, initial = initial, assess = assess)
+}
+```
+
+The key idea: `splitGraph` puts ordering information on the spec; the
+adapter is just a thin shim that consumes it.
+
+## Going across language boundaries via JSON
+
+If the downstream consumer is not in R, write the spec to JSON and let the
+consumer (Python, Julia, a CLI) interpret it.
+
+```{r serialize, eval = requireNamespace("jsonlite", quietly = TRUE)}
+tmp <- tempfile(fileext = ".json")
+write_split_spec(spec, tmp)
+
+# Inspect the first ~30 lines so the on-disk format is visible.
+cat(readLines(tmp, n = 30), sep = "\n")
+
+# And read it back exactly.
+spec2 <- read_split_spec(tmp)
+identical(spec$sample_data$group_id, spec2$sample_data$group_id)
+
+unlink(tmp)
+```
+
+The same pair exists for `dependency_graph` (`write_dependency_graph()` /
+`read_dependency_graph()`). Both formats are documented under
+`?write_split_spec` and `?write_dependency_graph` and include a
+`schema_version` field so consumers can detect drift.
+
+## When you need a custom adapter
+
+The only assumptions an adapter has to honor:
+
+- `split_spec$sample_data` is keyed by `sample_id` (character).
+- `split_spec$group_var` is the column that holds the splitting unit.
+- `split_spec$block_vars` are present-but-coarser blocking columns.
+- `split_spec$time_var`, when non-`NULL`, defines the ordering.
+- `split_spec$recommended_resampling` is a hint, not a contract — your
+  adapter is free to ignore it.
+
+That is the whole interface. As long as those five fields are honored,
+anything is a valid downstream consumer.

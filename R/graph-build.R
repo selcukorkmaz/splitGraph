@@ -1,5 +1,37 @@
 # Graph assembly helpers.
 
+# Build a helpful error message when edge endpoints don't match any node ID.
+# If the missing references look like prefixed IDs (e.g. "sample:S1") while
+# the node table uses unprefixed keys (or vice versa), point at that as a
+# likely cause — this is the most common first-time-user mistake.
+.depgraph_missing_reference_message <- function(missing, node_ids, side) {
+  base_msg <- paste0(
+    "Edge data contains `", side, "` references that are not present in the node table: ",
+    paste(utils::head(missing, 5L), collapse = ", "),
+    if (length(missing) > 5L) paste0(" ... (+", length(missing) - 5L, " more)") else ""
+  )
+
+  missing_has_prefix <- any(grepl(":", missing, fixed = TRUE))
+  nodes_have_prefix <- any(grepl(":", node_ids, fixed = TRUE))
+
+  hint <- ""
+  if (missing_has_prefix && !nodes_have_prefix) {
+    hint <- paste0(
+      "\nHint: edge endpoints look prefixed (e.g. `sample:S1`) but node IDs are not. ",
+      "Either rebuild nodes with `prefix = TRUE` (the default) or rebuild edges with ",
+      "`from_prefix = FALSE` and `to_prefix = FALSE`."
+    )
+  } else if (!missing_has_prefix && nodes_have_prefix) {
+    hint <- paste0(
+      "\nHint: node IDs are prefixed (e.g. `sample:S1`) but edge endpoints are not. ",
+      "Rebuild edges with `from_prefix = TRUE` and `to_prefix = TRUE`, or rebuild nodes ",
+      "with `prefix = FALSE`."
+    )
+  }
+
+  paste0(base_msg, hint)
+}
+
 #' Assemble and Validate Dependency Graphs
 #'
 #' Combine canonical node and edge tables into a typed dependency graph and
@@ -10,9 +42,20 @@
 #' @param graph_name,dataset_name Optional metadata labels.
 #' @param validate If \code{TRUE}, run \code{validate_graph()} before returning.
 #' @param validation_overrides Optional named list of explicit validation
-#'   exceptions.
+#'   exceptions. Currently supported keys:
+#'   \describe{
+#'     \item{\code{allow_multi_subject_samples}}{If \code{TRUE}, the semantic
+#'       validator does not flag samples linked to multiple subjects, and
+#'       \code{derive_split_constraints(mode = "subject")} silently keeps the
+#'       first listed subject assignment (recording the ambiguity in
+#'       \code{metadata$warnings}). Defaults to \code{FALSE}.}
+#'   }
+#'   When passed to \code{validate_graph()} or \code{validate_depgraph()},
+#'   the override is merged into the graph's existing
+#'   \code{validation_overrides} for the duration of the call only.
 #' @param graph A \code{dependency_graph}.
-#' @param checks Validation checks to run.
+#' @param checks \strong{Deprecated.} Use \code{levels} and \code{severities}
+#'   instead. Retained for backward compatibility with 0.1.0 callers.
 #' @param error_on_fail If \code{TRUE}, stop when validation errors are found
 #'   across all detected issues from the selected validation levels, even if
 #'   those errors are hidden from \code{issues} by \code{severities}.
@@ -54,11 +97,19 @@ build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name
   .depgraph_assert(anyDuplicated(edge_data$edge_id) == 0L, "Duplicate `edge_id` values found in edge sets.")
   .depgraph_assert(
     all(edge_data$from %in% node_data$node_id),
-    "Edge data contains `from` references that are not present in the node table."
+    .depgraph_missing_reference_message(
+      missing = setdiff(unique(edge_data$from), node_data$node_id),
+      node_ids = node_data$node_id,
+      side = "from"
+    )
   )
   .depgraph_assert(
     all(edge_data$to %in% node_data$node_id),
-    "Edge data contains `to` references that are not present in the node table."
+    .depgraph_missing_reference_message(
+      missing = setdiff(unique(edge_data$to), node_data$node_id),
+      node_ids = node_data$node_id,
+      side = "to"
+    )
   )
 
   graph_obj <- dependency_graph(
@@ -93,6 +144,11 @@ build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name
 #' @rdname build_dependency_graph
 #' @export
 build_depgraph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, validation_overrides = list()) {
+  .Deprecated(
+    new = "build_dependency_graph",
+    package = "splitGraph",
+    msg = "`build_depgraph()` is deprecated. Use `build_dependency_graph()` instead."
+  )
   build_dependency_graph(
     nodes = nodes,
     edges = edges,

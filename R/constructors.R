@@ -111,18 +111,33 @@ dependency_graph <- function(nodes, edges, graph, metadata = list(), caches = li
 #' @rdname graph_node_set
 #' @export
 new_depgraph_nodes <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
+  .Deprecated(
+    new = "graph_node_set",
+    package = "splitGraph",
+    msg = "`new_depgraph_nodes()` is deprecated. Use `graph_node_set()` instead."
+  )
   graph_node_set(data = data, schema_version = schema_version, source = source)
 }
 
 #' @rdname graph_node_set
 #' @export
 new_depgraph_edges <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
+  .Deprecated(
+    new = "graph_edge_set",
+    package = "splitGraph",
+    msg = "`new_depgraph_edges()` is deprecated. Use `graph_edge_set()` instead."
+  )
   graph_edge_set(data = data, schema_version = schema_version, source = source)
 }
 
 #' @rdname graph_node_set
 #' @export
 new_depgraph <- function(nodes, edges, graph = NULL, metadata = list(), caches = list()) {
+  .Deprecated(
+    new = "dependency_graph",
+    package = "splitGraph",
+    msg = "`new_depgraph()` is deprecated. Use `dependency_graph()` instead."
+  )
   dependency_graph(nodes = nodes, edges = edges, graph = graph, metadata = metadata, caches = caches)
 }
 

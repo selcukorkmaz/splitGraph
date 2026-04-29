@@ -16,6 +16,12 @@
 #' @importFrom igraph ecount graph_from_data_frame vcount
 "_PACKAGE"
 
+# Schema version for the dataset-dependency-graph data model. This is
+# intentionally decoupled from the package version: bump it only when the
+# canonical node, edge, constraint, or split_spec table contracts change in a
+# way that breaks round-trip compatibility with previously constructed
+# objects. A package release that only adds functions or fixes bugs must NOT
+# bump this string.
 .depgraph_schema_version <- "0.1.0"
 
 .depgraph_node_types <- c(
@@ -122,6 +128,13 @@
   "warning",
   "advisory"
 )
+
+# Default upper bound on path length used by `query_paths()` when the caller
+# does not pass `max_length`. Picked to keep `igraph::all_simple_paths()`
+# tractable on typed dataset graphs (most useful chains span Sample ->
+# Subject/Batch/... -> Outcome, i.e. <= 3 hops). Pass `max_length = Inf` to
+# opt out of the cap.
+.depgraph_default_path_cap <- 8L
 
 .depgraph_edge_schema <- data.frame(
   edge_type = c(
@@ -551,4 +564,17 @@
     return(default)
   }
   isTRUE(overrides[[key]])
+}
+
+# Returns a shallow copy of the graph with `validation_overrides` merged into
+# its metadata. Explicit values in `overrides` win over any pre-existing
+# graph-level overrides; unspecified keys are preserved.
+.depgraph_with_overrides <- function(graph, overrides) {
+  if (is.null(overrides) || length(overrides) == 0L) {
+    return(graph)
+  }
+  existing <- graph$metadata$validation_overrides
+  if (is.null(existing)) existing <- list()
+  graph$metadata$validation_overrides <- utils::modifyList(existing, overrides)
+  graph
 }

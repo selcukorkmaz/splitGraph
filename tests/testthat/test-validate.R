@@ -184,7 +184,7 @@ test_that("error_on_fail still errors when severity filtering hides visible erro
     fixed = TRUE
   )
   expect_error(
-    validate_depgraph(graph, severities = "warning", error_on_fail = TRUE),
+    suppressWarnings(validate_depgraph(graph, severities = "warning", error_on_fail = TRUE)),
     "Graph validation failed.",
     fixed = TRUE
   )
@@ -276,7 +276,10 @@ test_that("validate_depgraph is a compatibility alias", {
   )
 
   graph <- dependency_graph(nodes = nodes, edges = edges, graph = NULL)
-  validation <- validate_depgraph(graph)
+  # validate_depgraph is deprecated as of 0.2.0; deprecation warnings are
+  # tested in test-deprecations.R, so silence them here while we verify
+  # delegation parity with validate_graph().
+  validation <- suppressWarnings(validate_depgraph(graph))
   graph_validation <- validate_graph(graph)
 
   expect_s3_class(validation, "depgraph_validation_report")

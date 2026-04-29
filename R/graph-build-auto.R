@@ -41,7 +41,7 @@
 #'   batch_id   = c("B1", "B2", "B1", "B2"),
 #'   timepoint_id = c("T1", "T2", "T1", "T2"),
 #'   time_index = c(1, 2, 1, 2),
-#'   outcome_value = c(0, 1, 0, 1)
+#'   outcome_id = c("ctrl", "case", "ctrl", "case")
 #' )
 #'
 #' g <- graph_from_metadata(meta, graph_name = "demo")
@@ -115,6 +115,15 @@ graph_from_metadata <- function(meta,
     present <- !is.na(meta[[outcome_col]]) & nzchar(as.character(meta[[outcome_col]]))
     if (any(present)) {
       sub <- meta[present, , drop = FALSE]
+      if (identical(outcome_col, "outcome_value") && is.numeric(meta[[outcome_col]])) {
+        warning(
+          "`outcome_value` is numeric: graph_from_metadata() will create one ",
+          "Outcome node per distinct numeric value (e.g. `outcome:0`, `outcome:1`). ",
+          "If you intended a class label, pass `outcome_id` (character) instead, ",
+          "or coerce `outcome_value` to a character class label first.",
+          call. = FALSE
+        )
+      }
       sub$outcome_id <- as.character(sub[[outcome_col]])
       node_sets[[length(node_sets) + 1L]] <- create_nodes(
         sub, type = "Outcome", id_col = "outcome_id"

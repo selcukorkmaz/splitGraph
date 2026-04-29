@@ -1,5 +1,24 @@
 # Query helpers for dependency_graph objects.
 
+# Resolve the user-supplied `max_length` to an `igraph::all_simple_paths`
+# `cutoff` value. NULL -> documented default cap; Inf -> no cap (cutoff=-1);
+# any non-negative integer is passed through. Any other input errors.
+.depgraph_resolve_path_cutoff <- function(max_length) {
+  if (is.null(max_length)) {
+    return(.depgraph_default_path_cap)
+  }
+  if (length(max_length) != 1L || !is.numeric(max_length)) {
+    stop("`max_length` must be a single numeric value, Inf, or NULL.", call. = FALSE)
+  }
+  if (is.infinite(max_length)) {
+    return(-1)
+  }
+  if (is.na(max_length) || max_length < 0) {
+    stop("`max_length` must be non-negative.", call. = FALSE)
+  }
+  as.integer(max_length)
+}
+
 .depgraph_resolve_node_ids <- function(graph, node_ids) {
   node_data <- graph$nodes$data
   node_ids <- unique(as.character(node_ids))
@@ -300,7 +319,12 @@
 #' @param direction,mode Traversal direction.
 #' @param ids Optional node identifiers used to further restrict
 #'   \code{query_node_type()}.
-#' @param max_length Maximum path length for \code{query_paths()}.
+#' @param max_length Maximum path length (number of edges) for
+#'   \code{query_paths()}. Defaults to a documented finite cap
+#'   (\code{8}) so that \code{igraph::all_simple_paths()} cannot blow up
+#'   on dense graphs. Pass \code{Inf} to opt out and search exhaustively;
+#'   pass any non-negative integer for an explicit cap. Negative values and
+#'   non-numeric inputs are rejected.
 #' @param via Dependency node types used for sample-level dependency detection.
 #' @param min_size Minimum component size retained by
 #'   \code{detect_dependency_components()}.
@@ -451,6 +475,7 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
   mode <- match.arg(mode)
   from_ids <- .depgraph_resolve_node_ids(graph, from)
   to_ids <- .depgraph_resolve_node_ids(graph, to)
+  cutoff_value <- .depgraph_resolve_path_cutoff(max_length)
   filtered_graph <- .depgraph_filter_graph_by_edge_type(graph, edge_types)
   edge_data <- .depgraph_subset_edges(graph, edge_types = edge_types)
   path_nodes <- list()
@@ -463,7 +488,7 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
         from = from_id,
         to = to_id,
         mode = mode,
-        cutoff = if (is.null(max_length)) -1 else max_length
+        cutoff = cutoff_value
       )
       if (length(paths) == 0L) {
         next

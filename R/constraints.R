@@ -56,13 +56,26 @@
   duplicate_sources <- unique(edges$from[duplicated(edges$from)])
   if (length(duplicate_sources) > 0L) {
     duplicate_samples <- sample_nodes$node_key[match(duplicate_sources, sample_nodes$node_id)]
-    stop(
-      paste0(
-        "Multiple ", mode, " assignments found for sample(s): ",
-        paste(duplicate_samples, collapse = ", ")
-      ),
-      call. = FALSE
-    )
+    allow_multi <- identical(mode, "subject") &&
+      .depgraph_validation_override(graph, "allow_multi_subject_samples", default = FALSE)
+    if (!allow_multi) {
+      hint <- if (identical(mode, "subject")) {
+        " (set `validation_overrides = list(allow_multi_subject_samples = TRUE)` to allow this and pick the first listed assignment.)"
+      } else {
+        ""
+      }
+      stop(
+        paste0(
+          "Multiple ", mode, " assignments found for sample(s): ",
+          paste(duplicate_samples, collapse = ", "),
+          hint
+        ),
+        call. = FALSE
+      )
+    }
+    multi_assignment_samples <- duplicate_samples
+  } else {
+    multi_assignment_samples <- character()
   }
 
   edges <- edges[!duplicated(edges$from), , drop = FALSE]
@@ -102,6 +115,7 @@
 
   out <- do.call(rbind, rows)
   row.names(out) <- NULL
+  attr(out, "multi_assignment_samples") <- multi_assignment_samples
   out
 }
 
@@ -268,6 +282,17 @@
 .derive_subject_constraints <- function(graph, samples = NULL) {
   assignments <- .depgraph_direct_assignment(graph, "subject", samples = samples)
   warnings <- .depgraph_warning_if_missing(assignments, "subject")
+  multi_subject_samples <- attr(assignments, "multi_assignment_samples", exact = TRUE)
+  if (!is.null(multi_subject_samples) && length(multi_subject_samples) > 0L) {
+    warnings <- c(
+      warnings,
+      paste0(
+        "Samples linked to multiple subjects were assigned to their first listed subject ",
+        "(allow_multi_subject_samples override): ",
+        paste(multi_subject_samples, collapse = ", ")
+      )
+    )
+  }
   sample_map <- .depgraph_build_sample_map(assignments, "subject")
 
   split_constraint(

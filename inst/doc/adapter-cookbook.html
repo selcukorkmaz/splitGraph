@@ -13,7 +13,7 @@
 
 <meta name="date" content="2026-04-29" />
 
-<title>splitGraph: From Metadata to Leakage-Aware Split Design</title>
+<title>Adapter cookbook: from split_spec to native resamples</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,1210 +350,255 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">splitGraph: From Metadata to Leakage-Aware
-Split Design</h1>
+<h1 class="title toc-ignore">Adapter cookbook: from split_spec to native
+resamples</h1>
 <h4 class="author">Selçuk Korkmaz</h4>
 <h4 class="date">2026-04-29</h4>
 
 </div>
 
 
-<div id="why-splitgraph-exists" class="section level2">
-<h2>Why <code>splitGraph</code> exists</h2>
-<p>Leakage in biomedical evaluation workflows often comes from dataset
-structure rather than from an obvious coding mistake. Two samples may
-look independent in a model matrix while still sharing the same subject,
-batch, study, timepoint, or feature provenance. If those relationships
-stay implicit, train/test separation can look correct while violating
-the scientific separation you actually intended.</p>
-<p><code>splitGraph</code> exists to make those relationships explicit
-before evaluation. It turns metadata into a typed dependency graph that
-can be:</p>
-<ul>
-<li>validated for structural and leakage-relevant problems</li>
-<li>queried to inspect hidden overlap and provenance</li>
-<li>converted into deterministic split constraints</li>
-<li>translated into a stable, tool-agnostic split specification through
-the <code>split_spec</code> class and <code>as_split_spec()</code> /
-<code>validate_split_spec()</code> API</li>
-</ul>
-<p>The package is intentionally narrow. It does not fit models, run
-preprocessing pipelines, or generate resamples by itself. Its job is to
-represent dependency structure clearly enough that downstream evaluation
-can be trustworthy.</p>
+<div id="what-this-vignette-is-for" class="section level2">
+<h2>What this vignette is for</h2>
+<p><code>splitGraph</code> ends at a <code>split_spec</code> object. It
+deliberately knows nothing about <code>rsample</code>,
+<code>tidymodels</code>, or any other resampling engine. The handoff
+contract is the <code>sample_data</code> table inside the spec plus a
+few scalar fields (<code>group_var</code>, <code>block_vars</code>,
+<code>time_var</code>, <code>ordering_required</code>,
+<code>recommended_resampling</code>).</p>
+<p>This cookbook shows three small, self-contained adapters that turn a
+<code>split_spec</code> into something a downstream workflow can
+use:</p>
+<ol style="list-style-type: decimal">
+<li>A <strong>base-R adapter</strong> that returns a list of
+<code>(train, test)</code> row-index pairs — runnable here, no extra
+dependencies.</li>
+<li>An <strong><code>rsample::group_vfold_cv()</code></strong> adapter
+for grouped cross-validation keyed to <code>group_id</code>.</li>
+<li>An <strong><code>rsample::rolling_origin()</code></strong> adapter
+for ordered evaluation keyed to <code>order_rank</code>.</li>
+</ol>
+<p>Adapters 2 and 3 show idiomatic glue but are not evaluated in this
+vignette so that <code>splitGraph</code> does not pick up
+<code>rsample</code> as a build-time dependency.</p>
+<p>The same pattern works for any other resampling library you happen to
+use.</p>
 </div>
-<div id="a-realistic-toy-dataset" class="section level2">
-<h2>A realistic toy dataset</h2>
-<p>The example below includes exactly the kinds of relationships that
-usually matter for leakage-aware evaluation:</p>
-<ul>
-<li>repeated subjects (<code>P1</code> and <code>P2</code>)</li>
-<li>reused batch (<code>B1</code>)</li>
-<li>one subject (<code>P2</code>) appearing across studies</li>
-<li>explicit time ordering with one sample missing time metadata</li>
-<li>a feature set derived at the full-dataset scope</li>
-</ul>
+<div id="build-a-split_spec-to-work-with" class="section level2">
+<h2>Build a split_spec to work with</h2>
 <pre class="r"><code>meta &lt;- data.frame(
-  sample_id = c(&quot;S1&quot;, &quot;S2&quot;, &quot;S3&quot;, &quot;S4&quot;, &quot;S5&quot;, &quot;S6&quot;),
-  subject_id = c(&quot;P1&quot;, &quot;P1&quot;, &quot;P2&quot;, &quot;P3&quot;, &quot;P4&quot;, &quot;P2&quot;),
-  batch_id = c(&quot;B1&quot;, &quot;B2&quot;, &quot;B1&quot;, &quot;B3&quot;, NA, &quot;B1&quot;),
-  study_id = c(&quot;ST1&quot;, &quot;ST1&quot;, &quot;ST1&quot;, &quot;ST2&quot;, &quot;ST3&quot;, &quot;ST2&quot;),
-  timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T0&quot;, &quot;T2&quot;, NA, &quot;T1&quot;),
-  assay_id = c(&quot;RNAseq&quot;, &quot;RNAseq&quot;, &quot;RNAseq&quot;, &quot;RNAseq&quot;, &quot;Proteomics&quot;, &quot;RNAseq&quot;),
-  featureset_id = c(&quot;FS_GLOBAL&quot;, &quot;FS_GLOBAL&quot;, &quot;FS_GLOBAL&quot;, &quot;FS_GLOBAL&quot;, &quot;FS_PROT&quot;, &quot;FS_GLOBAL&quot;),
-  outcome_id = c(&quot;O_case&quot;, &quot;O_case&quot;, &quot;O_ctrl&quot;, &quot;O_case&quot;, &quot;O_ctrl&quot;, &quot;O_ctrl&quot;),
+  sample_id    = c(&quot;S1&quot;, &quot;S2&quot;, &quot;S3&quot;, &quot;S4&quot;, &quot;S5&quot;, &quot;S6&quot;),
+  subject_id   = c(&quot;P1&quot;, &quot;P1&quot;, &quot;P2&quot;, &quot;P2&quot;, &quot;P3&quot;, &quot;P3&quot;),
+  batch_id     = c(&quot;B1&quot;, &quot;B2&quot;, &quot;B1&quot;, &quot;B2&quot;, &quot;B1&quot;, &quot;B2&quot;),
+  timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T0&quot;, &quot;T1&quot;, &quot;T0&quot;, &quot;T1&quot;),
+  time_index   = c(0, 1, 0, 1, 0, 1),
+  outcome_id   = c(&quot;ctrl&quot;, &quot;case&quot;, &quot;ctrl&quot;, &quot;case&quot;, &quot;case&quot;, &quot;ctrl&quot;),
   stringsAsFactors = FALSE
 )
 
-meta
-#&gt;   sample_id subject_id batch_id study_id timepoint_id   assay_id featureset_id
-#&gt; 1        S1         P1       B1      ST1           T0     RNAseq     FS_GLOBAL
-#&gt; 2        S2         P1       B2      ST1           T1     RNAseq     FS_GLOBAL
-#&gt; 3        S3         P2       B1      ST1           T0     RNAseq     FS_GLOBAL
-#&gt; 4        S4         P3       B3      ST2           T2     RNAseq     FS_GLOBAL
-#&gt; 5        S5         P4     &lt;NA&gt;      ST3         &lt;NA&gt; Proteomics       FS_PROT
-#&gt; 6        S6         P2       B1      ST2           T1     RNAseq     FS_GLOBAL
-#&gt;   outcome_id
-#&gt; 1     O_case
-#&gt; 2     O_case
-#&gt; 3     O_ctrl
-#&gt; 4     O_case
-#&gt; 5     O_ctrl
-#&gt; 6     O_ctrl</code></pre>
-<p>This is still a small example, but it already contains enough
-structure to make naive random splitting risky.</p>
-</div>
-<div id="fast-path-graph_from_metadata" class="section level2">
-<h2>Fast path: <code>graph_from_metadata()</code></h2>
-<p>When your metadata already uses the canonical column names
-(<code>sample_id</code>, <code>subject_id</code>, <code>batch_id</code>,
-<code>study_id</code>, <code>timepoint_id</code>,
-<code>time_index</code>, <code>assay_id</code>,
-<code>featureset_id</code>, <code>outcome_id</code> /
-<code>outcome_value</code>), <code>graph_from_metadata()</code> does
-ingestion, typed node construction, canonical edge construction, and
-optional <code>timepoint_precedes</code> derivation in a single
-call:</p>
-<pre class="r"><code>quick_graph &lt;- graph_from_metadata(
-  data.frame(
-    sample_id    = c(&quot;S1&quot;, &quot;S2&quot;, &quot;S3&quot;, &quot;S4&quot;, &quot;S5&quot;, &quot;S6&quot;),
-    subject_id   = c(&quot;P1&quot;, &quot;P1&quot;, &quot;P2&quot;, &quot;P2&quot;, &quot;P3&quot;, &quot;P3&quot;),
-    batch_id     = c(&quot;B1&quot;, &quot;B2&quot;, &quot;B1&quot;, &quot;B2&quot;, &quot;B1&quot;, &quot;B2&quot;),
-    timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T0&quot;, &quot;T1&quot;, &quot;T0&quot;, &quot;T1&quot;),
-    time_index   = c(0, 1, 0, 1, 0, 1),
-    outcome_id   = c(&quot;ctrl&quot;, &quot;case&quot;, &quot;ctrl&quot;, &quot;case&quot;, &quot;case&quot;, &quot;ctrl&quot;)
-  ),
-  graph_name = &quot;quick_demo&quot;
-)
-
-quick_graph
-#&gt; &lt;dependency_graph&gt; quick_demo 
-#&gt;   Nodes: 15 
-#&gt;   Edges: 25</code></pre>
-<p>If you pass <code>outcome_value</code> as a numeric column
-(e.g. <code>0</code>/<code>1</code>), the package will create one
-<code>Outcome</code> node per distinct numeric value
-(<code>outcome:0</code>, <code>outcome:1</code>) and emit a warning. For
-most workflows you want a character class label, so prefer
-<code>outcome_id</code>.</p>
-<p>The rest of this vignette uses the explicit constructor path because
-it lets us show node attributes (<code>time_index</code>,
-<code>visit_label</code>, <code>platform</code>,
-<code>derivation_scope</code>) and non-canonical edges
-(<code>featureset_generated_from_*</code>,
-<code>subject_has_outcome</code>) that
-<code>graph_from_metadata()</code> does not build for you. Use
-<code>graph_from_metadata()</code> when the canonical columns are
-enough; use the explicit path when you need custom attributes or extra
-relations.</p>
-</div>
-<div id="ingest-metadata-and-build-typed-nodes-and-edges" class="section level2">
-<h2>Ingest metadata and build typed nodes and edges</h2>
-<p>The first step is to standardize metadata and then turn each entity
-type into canonical graph nodes. Sample-level relations become typed
-edges.</p>
-<pre class="r"><code>meta &lt;- ingest_metadata(meta, dataset_name = &quot;VignetteDemo&quot;)
-
-sample_nodes &lt;- create_nodes(meta, type = &quot;Sample&quot;, id_col = &quot;sample_id&quot;)
-subject_nodes &lt;- create_nodes(meta, type = &quot;Subject&quot;, id_col = &quot;subject_id&quot;)
-batch_nodes &lt;- create_nodes(meta, type = &quot;Batch&quot;, id_col = &quot;batch_id&quot;)
-study_nodes &lt;- create_nodes(meta, type = &quot;Study&quot;, id_col = &quot;study_id&quot;)
-
-time_nodes &lt;- create_nodes(
-  data.frame(
-    timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T2&quot;),
-    time_index = c(0L, 1L, 2L),
-    visit_label = c(&quot;baseline&quot;, &quot;follow_up&quot;, &quot;late_follow_up&quot;),
-    stringsAsFactors = FALSE
-  ),
-  type = &quot;Timepoint&quot;,
-  id_col = &quot;timepoint_id&quot;,
-  attr_cols = c(&quot;time_index&quot;, &quot;visit_label&quot;)
-)
-
-assay_nodes &lt;- create_nodes(
-  data.frame(
-    assay_id = c(&quot;RNAseq&quot;, &quot;Proteomics&quot;),
-    modality = c(&quot;transcriptomics&quot;, &quot;proteomics&quot;),
-    platform = c(&quot;NovaSeq&quot;, &quot;Orbitrap&quot;),
-    stringsAsFactors = FALSE
-  ),
-  type = &quot;Assay&quot;,
-  id_col = &quot;assay_id&quot;,
-  attr_cols = c(&quot;modality&quot;, &quot;platform&quot;)
-)
-
-featureset_nodes &lt;- create_nodes(
-  data.frame(
-    featureset_id = c(&quot;FS_GLOBAL&quot;, &quot;FS_PROT&quot;),
-    featureset_name = c(&quot;global_rna_signature&quot;, &quot;proteomics_panel&quot;),
-    derivation_scope = c(&quot;per_dataset&quot;, &quot;external&quot;),
-    feature_count = c(500L, 80L),
-    stringsAsFactors = FALSE
-  ),
-  type = &quot;FeatureSet&quot;,
-  id_col = &quot;featureset_id&quot;,
-  attr_cols = c(&quot;featureset_name&quot;, &quot;derivation_scope&quot;, &quot;feature_count&quot;)
-)
-
-outcome_nodes &lt;- create_nodes(
-  data.frame(
-    outcome_id = c(&quot;O_case&quot;, &quot;O_ctrl&quot;),
-    outcome_name = c(&quot;response&quot;, &quot;response&quot;),
-    outcome_type = c(&quot;binary&quot;, &quot;binary&quot;),
-    observation_level = c(&quot;subject&quot;, &quot;subject&quot;),
-    stringsAsFactors = FALSE
-  ),
-  type = &quot;Outcome&quot;,
-  id_col = &quot;outcome_id&quot;,
-  attr_cols = c(&quot;outcome_name&quot;, &quot;outcome_type&quot;, &quot;observation_level&quot;)
-)
-
-subject_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;subject_id&quot;,
-  &quot;Sample&quot;, &quot;Subject&quot;, &quot;sample_belongs_to_subject&quot;
-)
-
-batch_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;batch_id&quot;,
-  &quot;Sample&quot;, &quot;Batch&quot;, &quot;sample_processed_in_batch&quot;,
-  allow_missing = TRUE
-)
-
-study_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;study_id&quot;,
-  &quot;Sample&quot;, &quot;Study&quot;, &quot;sample_from_study&quot;
-)
-
-time_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;timepoint_id&quot;,
-  &quot;Sample&quot;, &quot;Timepoint&quot;, &quot;sample_collected_at_timepoint&quot;,
-  allow_missing = TRUE
-)
-
-assay_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;assay_id&quot;,
-  &quot;Sample&quot;, &quot;Assay&quot;, &quot;sample_measured_by_assay&quot;
-)
-
-featureset_edges &lt;- create_edges(
-  meta, &quot;sample_id&quot;, &quot;featureset_id&quot;,
-  &quot;Sample&quot;, &quot;FeatureSet&quot;, &quot;sample_uses_featureset&quot;
-)
-
-outcome_edges &lt;- create_edges(
-  data.frame(
-    subject_id = c(&quot;P1&quot;, &quot;P2&quot;, &quot;P3&quot;, &quot;P4&quot;),
-    outcome_id = c(&quot;O_case&quot;, &quot;O_ctrl&quot;, &quot;O_case&quot;, &quot;O_ctrl&quot;),
-    stringsAsFactors = FALSE
-  ),
-  &quot;subject_id&quot;, &quot;outcome_id&quot;,
-  &quot;Subject&quot;, &quot;Outcome&quot;, &quot;subject_has_outcome&quot;
-)
-
-precedence_edges &lt;- create_edges(
-  data.frame(
-    from_timepoint = c(&quot;T0&quot;, &quot;T1&quot;),
-    to_timepoint = c(&quot;T1&quot;, &quot;T2&quot;),
-    stringsAsFactors = FALSE
-  ),
-  &quot;from_timepoint&quot;, &quot;to_timepoint&quot;,
-  &quot;Timepoint&quot;, &quot;Timepoint&quot;, &quot;timepoint_precedes&quot;
-)
-
-featureset_from_study &lt;- create_edges(
-  data.frame(
-    featureset_id = &quot;FS_GLOBAL&quot;,
-    study_id = &quot;ST1&quot;,
-    stringsAsFactors = FALSE
-  ),
-  &quot;featureset_id&quot;, &quot;study_id&quot;,
-  &quot;FeatureSet&quot;, &quot;Study&quot;, &quot;featureset_generated_from_study&quot;
-)
-
-featureset_from_batch &lt;- create_edges(
-  data.frame(
-    featureset_id = &quot;FS_GLOBAL&quot;,
-    batch_id = &quot;B1&quot;,
-    stringsAsFactors = FALSE
-  ),
-  &quot;featureset_id&quot;, &quot;batch_id&quot;,
-  &quot;FeatureSet&quot;, &quot;Batch&quot;, &quot;featureset_generated_from_batch&quot;
-)</code></pre>
-<p>The node and edge tables are canonical and typed. The package assigns
-globally unique node IDs such as <code>sample:S1</code> and
-<code>subject:P1</code>, so different entity types cannot collide
-accidentally.</p>
-<pre class="r"><code>sample_nodes
-#&gt; &lt;graph_node_set&gt; 6 nodes across 1 types (schema 0.1.0 )
-as.data.frame(sample_nodes)[, c(&quot;node_id&quot;, &quot;node_type&quot;, &quot;node_key&quot;, &quot;label&quot;)]
-#&gt;     node_id node_type node_key label
-#&gt; 1 sample:S1    Sample       S1    S1
-#&gt; 2 sample:S2    Sample       S2    S2
-#&gt; 3 sample:S3    Sample       S3    S3
-#&gt; 4 sample:S4    Sample       S4    S4
-#&gt; 5 sample:S5    Sample       S5    S5
-#&gt; 6 sample:S6    Sample       S6    S6
-
-edge_preview &lt;- do.call(rbind, lapply(
-  list(
-    subject_edges, batch_edges, study_edges, time_edges,
-    assay_edges, featureset_edges, outcome_edges,
-    precedence_edges, featureset_from_study, featureset_from_batch
-  ),
-  as.data.frame
-))
-
-edge_preview[, c(&quot;from&quot;, &quot;to&quot;, &quot;edge_type&quot;)]
-#&gt;                    from                   to                       edge_type
-#&gt; 1             sample:S1           subject:P1       sample_belongs_to_subject
-#&gt; 2             sample:S2           subject:P1       sample_belongs_to_subject
-#&gt; 3             sample:S3           subject:P2       sample_belongs_to_subject
-#&gt; 4             sample:S4           subject:P3       sample_belongs_to_subject
-#&gt; 5             sample:S5           subject:P4       sample_belongs_to_subject
-#&gt; 6             sample:S6           subject:P2       sample_belongs_to_subject
-#&gt; 7             sample:S1             batch:B1       sample_processed_in_batch
-#&gt; 8             sample:S2             batch:B2       sample_processed_in_batch
-#&gt; 9             sample:S3             batch:B1       sample_processed_in_batch
-#&gt; 10            sample:S4             batch:B3       sample_processed_in_batch
-#&gt; 11            sample:S6             batch:B1       sample_processed_in_batch
-#&gt; 12            sample:S1            study:ST1               sample_from_study
-#&gt; 13            sample:S2            study:ST1               sample_from_study
-#&gt; 14            sample:S3            study:ST1               sample_from_study
-#&gt; 15            sample:S4            study:ST2               sample_from_study
-#&gt; 16            sample:S5            study:ST3               sample_from_study
-#&gt; 17            sample:S6            study:ST2               sample_from_study
-#&gt; 18            sample:S1         timepoint:T0   sample_collected_at_timepoint
-#&gt; 19            sample:S2         timepoint:T1   sample_collected_at_timepoint
-#&gt; 20            sample:S3         timepoint:T0   sample_collected_at_timepoint
-#&gt; 21            sample:S4         timepoint:T2   sample_collected_at_timepoint
-#&gt; 22            sample:S6         timepoint:T1   sample_collected_at_timepoint
-#&gt; 23            sample:S1         assay:RNAseq        sample_measured_by_assay
-#&gt; 24            sample:S2         assay:RNAseq        sample_measured_by_assay
-#&gt; 25            sample:S3         assay:RNAseq        sample_measured_by_assay
-#&gt; 26            sample:S4         assay:RNAseq        sample_measured_by_assay
-#&gt; 27            sample:S5     assay:Proteomics        sample_measured_by_assay
-#&gt; 28            sample:S6         assay:RNAseq        sample_measured_by_assay
-#&gt; 29            sample:S1 featureset:FS_GLOBAL          sample_uses_featureset
-#&gt; 30            sample:S2 featureset:FS_GLOBAL          sample_uses_featureset
-#&gt; 31            sample:S3 featureset:FS_GLOBAL          sample_uses_featureset
-#&gt; 32            sample:S4 featureset:FS_GLOBAL          sample_uses_featureset
-#&gt; 33            sample:S5   featureset:FS_PROT          sample_uses_featureset
-#&gt; 34            sample:S6 featureset:FS_GLOBAL          sample_uses_featureset
-#&gt; 35           subject:P1       outcome:O_case             subject_has_outcome
-#&gt; 36           subject:P2       outcome:O_ctrl             subject_has_outcome
-#&gt; 37           subject:P3       outcome:O_case             subject_has_outcome
-#&gt; 38           subject:P4       outcome:O_ctrl             subject_has_outcome
-#&gt; 39         timepoint:T0         timepoint:T1              timepoint_precedes
-#&gt; 40         timepoint:T1         timepoint:T2              timepoint_precedes
-#&gt; 41 featureset:FS_GLOBAL            study:ST1 featureset_generated_from_study
-#&gt; 42 featureset:FS_GLOBAL             batch:B1 featureset_generated_from_batch</code></pre>
-<p>The node table shows the canonical sample IDs that everything else
-refers to. The edge table shows the package’s central design choice:
-dependency structure is explicit, typed, and inspectable.</p>
-</div>
-<div id="assemble-the-dependency-graph" class="section level2">
-<h2>Assemble the dependency graph</h2>
-<pre class="r"><code>graph &lt;- build_dependency_graph(
-  nodes = list(
-    sample_nodes, subject_nodes, batch_nodes, study_nodes,
-    time_nodes, assay_nodes, featureset_nodes, outcome_nodes
-  ),
-  edges = list(
-    subject_edges, batch_edges, study_edges, time_edges,
-    assay_edges, featureset_edges, outcome_edges,
-    precedence_edges, featureset_from_study, featureset_from_batch
-  ),
-  graph_name = &quot;vignette_graph&quot;,
-  dataset_name = attr(meta, &quot;dataset_name&quot;)
-)
-
-graph
-#&gt; &lt;dependency_graph&gt; vignette_graph 
-#&gt;   Nodes: 25 
-#&gt;   Edges: 42
-summary(graph)
-#&gt; $graph_name
-#&gt; [1] &quot;vignette_graph&quot;
-#&gt; 
-#&gt; $dataset_name
-#&gt; [1] &quot;VignetteDemo&quot;
-#&gt; 
-#&gt; $schema_version
-#&gt; [1] &quot;0.1.0&quot;
-#&gt; 
-#&gt; $n_nodes
-#&gt; [1] 25
-#&gt; 
-#&gt; $n_edges
-#&gt; [1] 42
-#&gt; 
-#&gt; $node_types
-#&gt;        value n
-#&gt; 1     Sample 6
-#&gt; 2    Subject 4
-#&gt; 3      Batch 3
-#&gt; 4      Study 3
-#&gt; 5  Timepoint 3
-#&gt; 6      Assay 2
-#&gt; 7 FeatureSet 2
-#&gt; 8    Outcome 2
-#&gt; 
-#&gt; $edge_types
-#&gt;                              value n
-#&gt; 1        sample_belongs_to_subject 6
-#&gt; 2                sample_from_study 6
-#&gt; 3         sample_measured_by_assay 6
-#&gt; 4           sample_uses_featureset 6
-#&gt; 5    sample_collected_at_timepoint 5
-#&gt; 6        sample_processed_in_batch 5
-#&gt; 7              subject_has_outcome 4
-#&gt; 8               timepoint_precedes 2
-#&gt; 9  featureset_generated_from_batch 1
-#&gt; 10 featureset_generated_from_study 1</code></pre>
-<p>At this point the package has a single <code>dependency_graph</code>
-object with both tabular and <code>igraph</code> representations behind
-it. The summary is useful because it tells you exactly which entity
-types and relation types are present before you derive any split
-rules.</p>
-<div id="visualize-the-typed-structure" class="section level3">
-<h3>Visualize the typed structure</h3>
-<p><code>plot()</code> renders the graph with a typed, layered layout:
-<code>Sample</code> on top, peer dependencies (<code>Subject</code>,
-<code>Batch</code>, <code>Study</code>, <code>Timepoint</code>) in the
-middle band, <code>Assay</code>/<code>FeatureSet</code> below that, and
-<code>Outcome</code> at the bottom. Node colors are keyed to type and an
-auto-generated legend is drawn by default.</p>
-<pre class="r"><code>plot(graph)</code></pre>
-<p><img role="img" src="data:image/png;base64,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CHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIICABwAAgAACHgAAAAIIeAAAAAgg4AEAACCAgAcAAIAAAh4AAAACCHgAAAAIIOABAAAggIAHAACAAAIeAAAAAgh4AAAACCDgAQAAIMA/x7teBKhL0pkAAAAASUVORK5CYII=" width="672" /></p>
-<p>Useful options:</p>
-<pre class="r"><code>plot(graph, layout = &quot;sugiyama&quot;)         # alternative hierarchical layout
-plot(graph, show_labels = FALSE)         # hide labels on dense graphs
-plot(graph, legend = FALSE)              # suppress the legend
-plot(graph, legend_position = &quot;bottomright&quot;)
-plot(graph, node_colors = c(Sample = &quot;#000000&quot;))</code></pre>
-</div>
-</div>
-<div id="validate-before-you-split" class="section level2">
-<h2>Validate before you split</h2>
-<p>Validation is where <code>splitGraph</code> starts paying off. The
-graph below is structurally valid, but it still carries leakage-relevant
-warnings and advisories.</p>
-<pre class="r"><code>validation &lt;- validate_graph(graph)
-
-validation
-#&gt; &lt;depgraph_validation_report&gt;  vignette_graph
-#&gt;   Valid: TRUE 
-#&gt;   Issues: 6 
-#&gt;   By severity:
-#&gt;    - advisory : 5 
-#&gt;    - warning : 1
-as.data.frame(validation)[, c(&quot;level&quot;, &quot;severity&quot;, &quot;code&quot;, &quot;message&quot;)]
-#&gt;     level severity                         code
-#&gt; 1 leakage advisory     repeated_subject_samples
-#&gt; 2 leakage advisory     repeated_subject_samples
-#&gt; 3 leakage  warning  subject_cross_study_overlap
-#&gt; 4 leakage advisory       per_dataset_featureset
-#&gt; 5 leakage advisory shared_featureset_provenance
-#&gt; 6 leakage advisory            heavy_batch_reuse
-#&gt;                                                                    message
-#&gt; 1                      Subject `subject:P1` is linked to multiple samples.
-#&gt; 2                      Subject `subject:P2` is linked to multiple samples.
-#&gt; 3                    Subject `subject:P2` appears across multiple studies.
-#&gt; 4 FeatureSet `featureset:FS_GLOBAL` was derived at the full-dataset scope.
-#&gt; 5     FeatureSet `featureset:FS_GLOBAL` is shared across multiple samples.
-#&gt; 6                          Batch `batch:B1` is reused across many samples.</code></pre>
-<p>That output is the core value proposition of the package in one
-place:</p>
-<ul>
-<li>repeated subjects are surfaced explicitly</li>
-<li>cross-study subject overlap is surfaced explicitly</li>
-<li>full-dataset feature provenance is surfaced explicitly</li>
-<li>heavy batch reuse is surfaced explicitly</li>
-</ul>
-<p><code>valid = TRUE</code> here means the graph has no errors. It does
-not mean the dataset is free of leakage risk. Warnings and advisories
-still matter.</p>
-<p>The package is also intentionally strict about silent failure. If you
-ask for a subset of samples and some of them do not resolve, it errors
-instead of dropping them.</p>
-<pre class="r"><code>tryCatch(
-  derive_split_constraints(graph, mode = &quot;subject&quot;, samples = c(&quot;S1&quot;, &quot;BAD&quot;)),
-  error = function(e) e$message
-)
-#&gt; [1] &quot;Unknown sample IDs: BAD&quot;</code></pre>
-<p>That behavior is important in practice because quietly omitting
-samples would change the truth of the split problem.</p>
-<div id="when-you-really-do-need-to-relax-a-check" class="section level3">
-<h3>When you really do need to relax a check</h3>
-<p>Some leakage-relevant rules have legitimate exceptions. For example,
-in some pooled designs a single biological “sample” is intentionally
-paired across two subjects. The semantic validator flags this as an
-error by default, and
-<code>derive_split_constraints(mode = &quot;subject&quot;)</code> refuses to
-choose a subject for you — both consistent with the “no silent guessing”
-stance.</p>
-<p>To make the contrast concrete, build a tiny graph in which sample
-<code>S1</code> is linked to two subjects:</p>
-<pre class="r"><code>multi_nodes &lt;- graph_node_set(data.frame(
-  node_id   = c(&quot;sample:S1&quot;, &quot;subject:P1&quot;, &quot;subject:P2&quot;),
-  node_type = c(&quot;Sample&quot;, &quot;Subject&quot;, &quot;Subject&quot;),
-  node_key  = c(&quot;S1&quot;, &quot;P1&quot;, &quot;P2&quot;),
-  label     = c(&quot;S1&quot;, &quot;P1&quot;, &quot;P2&quot;),
-  attrs     = I(list(list(), list(), list())),
-  stringsAsFactors = FALSE
-))
-
-multi_edges &lt;- graph_edge_set(data.frame(
-  edge_id   = c(&quot;sample_belongs_to_subject:1&quot;, &quot;sample_belongs_to_subject:2&quot;),
-  from      = c(&quot;sample:S1&quot;, &quot;sample:S1&quot;),
-  to        = c(&quot;subject:P1&quot;, &quot;subject:P2&quot;),
-  edge_type = c(&quot;sample_belongs_to_subject&quot;, &quot;sample_belongs_to_subject&quot;),
-  attrs     = I(list(list(), list())),
-  stringsAsFactors = FALSE
-))
-
-multi_graph &lt;- dependency_graph(nodes = multi_nodes, edges = multi_edges)</code></pre>
-<p>Default behavior — the validator surfaces the multi-subject sample as
-an error, and constraint derivation refuses to pick a subject:</p>
-<pre class="r"><code>default_report &lt;- validate_graph(multi_graph)
-default_report$valid
-#&gt; [1] FALSE
-default_report$issues[, c(&quot;severity&quot;, &quot;code&quot;, &quot;message&quot;)]
-#&gt;   severity                                code
-#&gt; 1    error sample_multiple_subject_assignments
-#&gt;                                                                           message
-#&gt; 1 Samples violate relation cardinality for `sample_belongs_to_subject`: sample:S1
-
-tryCatch(
-  derive_split_constraints(multi_graph, mode = &quot;subject&quot;),
-  error = function(e) e$message
-)
-#&gt; [1] &quot;Multiple subject assignments found for sample(s): S1 (set `validation_overrides = list(allow_multi_subject_samples = TRUE)` to allow this and pick the first listed assignment.)&quot;</code></pre>
-<p>When the ambiguity is intended, opt in explicitly via
-<code>validation_overrides</code>. The same key
-(<code>allow_multi_subject_samples = TRUE</code>) is honored by both the
-validator and the constraint deriver:</p>
-<pre class="r"><code># Validator: pass.
-permissive_report &lt;- validate_graph(
-  multi_graph,
-  validation_overrides = list(allow_multi_subject_samples = TRUE)
-)
-permissive_report$valid
-#&gt; [1] TRUE
-
-# Constraint derivation: pick the first listed subject and record the
-# ambiguity in metadata$warnings instead of erroring.
-multi_graph$metadata$validation_overrides &lt;-
-  list(allow_multi_subject_samples = TRUE)
-relaxed_constraint &lt;- derive_split_constraints(multi_graph, mode = &quot;subject&quot;)
-relaxed_constraint$sample_map[, c(&quot;sample_id&quot;, &quot;group_id&quot;)]
-#&gt;   sample_id   group_id
-#&gt; 1        S1 subject:P1
-relaxed_constraint$metadata$warnings
-#&gt; [1] &quot;Samples linked to multiple subjects were assigned to their first listed subject (allow_multi_subject_samples override): S1&quot;</code></pre>
-<p>The override is documented under <code>?validate_graph</code>. Use it
-sparingly and only when the relaxation matches your scientific intent —
-the message in <code>metadata$warnings</code> is the audit trail that
-the choice was tolerated, not hidden.</p>
-</div>
-</div>
-<div id="query-the-graph-to-inspect-hidden-structure" class="section level2">
-<h2>Query the graph to inspect hidden structure</h2>
-<p>You can inspect local provenance, trace paths, and project direct
-sample dependencies.</p>
-<pre class="r"><code>neighbors_s1 &lt;- query_neighbors(graph, node_ids = &quot;sample:S1&quot;, direction = &quot;out&quot;)
-neighbors_s1
-#&gt; &lt;graph_query_result&gt; query_neighbors 
-#&gt;   Rows: 6
-as.data.frame(neighbors_s1)[, c(&quot;seed_node_id&quot;, &quot;node_id&quot;, &quot;node_type&quot;, &quot;edge_type&quot;)]
-#&gt;   seed_node_id              node_id  node_type                     edge_type
-#&gt; 1    sample:S1           subject:P1    Subject     sample_belongs_to_subject
-#&gt; 2    sample:S1             batch:B1      Batch     sample_processed_in_batch
-#&gt; 3    sample:S1            study:ST1      Study             sample_from_study
-#&gt; 4    sample:S1         timepoint:T0  Timepoint sample_collected_at_timepoint
-#&gt; 5    sample:S1         assay:RNAseq      Assay      sample_measured_by_assay
-#&gt; 6    sample:S1 featureset:FS_GLOBAL FeatureSet        sample_uses_featureset
-
-subject_outcome_path &lt;- query_shortest_paths(
-  graph,
-  from = &quot;sample:S1&quot;,
-  to = &quot;outcome:O_case&quot;,
-  edge_types = c(&quot;sample_belongs_to_subject&quot;, &quot;subject_has_outcome&quot;)
-)
-
-subject_outcome_path
-#&gt; &lt;graph_query_result&gt; query_shortest_paths 
-#&gt;   Rows: 3
-as.data.frame(subject_outcome_path)
-#&gt;   path_id step        node_id node_type                     edge_id
-#&gt; 1  path_1    1      sample:S1    Sample                        &lt;NA&gt;
-#&gt; 2  path_1    2     subject:P1   Subject sample_belongs_to_subject:1
-#&gt; 3  path_1    3 outcome:O_case   Outcome       subject_has_outcome:1
-#&gt;                   edge_type
-#&gt; 1                      &lt;NA&gt;
-#&gt; 2 sample_belongs_to_subject
-#&gt; 3       subject_has_outcome</code></pre>
-<p>The first query shows everything the graph knows directly about
-<code>S1</code>. The second shows that <code>S1</code> reaches the
-subject-level outcome through its subject node, which is exactly the
-kind of relationship that would stay implicit in a plain metadata
-table.</p>
-<pre class="r"><code>shared_dependencies &lt;- detect_shared_dependencies(
-  graph,
-  via = c(&quot;Subject&quot;, &quot;Batch&quot;, &quot;FeatureSet&quot;)
-)
-
-as.data.frame(shared_dependencies)[, c(
-  &quot;sample_id_1&quot;, &quot;sample_id_2&quot;, &quot;shared_node_type&quot;, &quot;shared_node_id&quot;, &quot;edge_type&quot;
-)]
-#&gt;    sample_id_1 sample_id_2 shared_node_type       shared_node_id
-#&gt; 1           S1          S2          Subject           subject:P1
-#&gt; 2           S3          S6          Subject           subject:P2
-#&gt; 3           S1          S3            Batch             batch:B1
-#&gt; 4           S1          S6            Batch             batch:B1
-#&gt; 5           S3          S6            Batch             batch:B1
-#&gt; 6           S1          S2       FeatureSet featureset:FS_GLOBAL
-#&gt; 7           S1          S3       FeatureSet featureset:FS_GLOBAL
-#&gt; 8           S1          S4       FeatureSet featureset:FS_GLOBAL
-#&gt; 9           S1          S6       FeatureSet featureset:FS_GLOBAL
-#&gt; 10          S2          S3       FeatureSet featureset:FS_GLOBAL
-#&gt; 11          S2          S4       FeatureSet featureset:FS_GLOBAL
-#&gt; 12          S2          S6       FeatureSet featureset:FS_GLOBAL
-#&gt; 13          S3          S4       FeatureSet featureset:FS_GLOBAL
-#&gt; 14          S3          S6       FeatureSet featureset:FS_GLOBAL
-#&gt; 15          S4          S6       FeatureSet featureset:FS_GLOBAL
-#&gt;                    edge_type
-#&gt; 1  sample_belongs_to_subject
-#&gt; 2  sample_belongs_to_subject
-#&gt; 3  sample_processed_in_batch
-#&gt; 4  sample_processed_in_batch
-#&gt; 5  sample_processed_in_batch
-#&gt; 6     sample_uses_featureset
-#&gt; 7     sample_uses_featureset
-#&gt; 8     sample_uses_featureset
-#&gt; 9     sample_uses_featureset
-#&gt; 10    sample_uses_featureset
-#&gt; 11    sample_uses_featureset
-#&gt; 12    sample_uses_featureset
-#&gt; 13    sample_uses_featureset
-#&gt; 14    sample_uses_featureset
-#&gt; 15    sample_uses_featureset
-
-dependency_components &lt;- detect_dependency_components(
-  graph,
-  via = c(&quot;Subject&quot;, &quot;Batch&quot;)
-)
-
-as.data.frame(dependency_components)
-#&gt;   sample_id sample_node_id component_id component_size
-#&gt; 1        S1      sample:S1  component_1              4
-#&gt; 2        S2      sample:S2  component_1              4
-#&gt; 3        S3      sample:S3  component_1              4
-#&gt; 4        S4      sample:S4  component_2              1
-#&gt; 5        S5      sample:S5  component_3              1
-#&gt; 6        S6      sample:S6  component_1              4</code></pre>
-<p>These projected queries are useful because they answer the splitting
-question directly. They tell you which samples should be treated as
-structurally linked, not just which metadata columns happen to
-match.</p>
-</div>
-<div id="derive-split-constraints-from-the-graph" class="section level2">
-<h2>Derive split constraints from the graph</h2>
-<p><code>splitGraph</code> can derive direct constraints for subject,
-batch, study, and time as well as composite constraints that combine
-multiple dependency sources.</p>
-<pre class="r"><code>subject_constraint &lt;- derive_split_constraints(graph, mode = &quot;subject&quot;)
-batch_constraint &lt;- derive_split_constraints(graph, mode = &quot;batch&quot;)
-study_constraint &lt;- derive_split_constraints(graph, mode = &quot;study&quot;)
-time_constraint &lt;- derive_split_constraints(graph, mode = &quot;time&quot;)
-
-strict_constraint &lt;- derive_split_constraints(
-  graph,
-  mode = &quot;composite&quot;,
-  strategy = &quot;strict&quot;,
-  via = c(&quot;Subject&quot;, &quot;Batch&quot;)
-)
-
-rule_based_constraint &lt;- derive_split_constraints(
-  graph,
-  mode = &quot;composite&quot;,
-  strategy = &quot;rule_based&quot;,
-  priority = c(&quot;batch&quot;, &quot;study&quot;, &quot;subject&quot;, &quot;time&quot;)
-)
-
-constraint_overview &lt;- do.call(rbind, lapply(
-  list(
-    subject = subject_constraint,
-    batch = batch_constraint,
-    study = study_constraint,
-    time = time_constraint,
-    composite_strict = strict_constraint,
-    composite_rule = rule_based_constraint
-  ),
-  function(x) {
-    data.frame(
-      strategy = x$strategy,
-      groups = length(unique(x$sample_map$group_id)),
-      warnings = if (is.null(x$metadata$warnings)) 0L else length(x$metadata$warnings),
-      stringsAsFactors = FALSE
-    )
-  }
-))
-
-constraint_overview &lt;- cbind(constraint = row.names(constraint_overview), constraint_overview)
-row.names(constraint_overview) &lt;- NULL
-
-constraint_overview
-#&gt;         constraint   strategy groups warnings
-#&gt; 1          subject    subject      4        0
-#&gt; 2            batch      batch      4        1
-#&gt; 3            study      study      3        0
-#&gt; 4             time       time      4        1
-#&gt; 5 composite_strict     strict      3        0
-#&gt; 6   composite_rule rule_based      4        0</code></pre>
-<p>That summary already shows why the package is useful: different
-notions of dependency produce different splitting units.</p>
-<div id="batch-constraints" class="section level3">
-<h3>Batch constraints</h3>
-<pre class="r"><code>batch_constraint
-#&gt; &lt;split_constraint&gt; batch 
-#&gt;   Samples: 6 
-#&gt;   Groups: 4 
-#&gt;   Warnings: 1
-as.data.frame(batch_constraint)[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;group_label&quot;, &quot;explanation&quot;)]
-#&gt;   sample_id          group_id group_label
-#&gt; 1        S1          batch:B1          B1
-#&gt; 2        S2          batch:B2          B2
-#&gt; 3        S3          batch:B1          B1
-#&gt; 4        S4          batch:B3          B3
-#&gt; 5        S5 batch:unlinked:S5 unlinked_S5
-#&gt; 6        S6          batch:B1          B1
-#&gt;                                                                          explanation
-#&gt; 1                          Grouped by batch through sample_processed_in_batch -&gt; B1.
-#&gt; 2                          Grouped by batch through sample_processed_in_batch -&gt; B2.
-#&gt; 3                          Grouped by batch through sample_processed_in_batch -&gt; B1.
-#&gt; 4                          Grouped by batch through sample_processed_in_batch -&gt; B3.
-#&gt; 5 No batch assignment was available; sample retained as an unlinked singleton group.
-#&gt; 6                          Grouped by batch through sample_processed_in_batch -&gt; B1.</code></pre>
-<p>Batch grouping keeps all <code>B1</code> samples together and
-preserves <code>S5</code> as an explicit singleton because it has no
-batch assignment. Missing structure is not hidden.</p>
-</div>
-<div id="time-constraints" class="section level3">
-<h3>Time constraints</h3>
-<pre class="r"><code>time_constraint
-#&gt; &lt;split_constraint&gt; time 
-#&gt;   Samples: 6 
-#&gt;   Groups: 4 
-#&gt;   Warnings: 1
-as.data.frame(time_constraint)[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;timepoint_id&quot;, &quot;order_rank&quot;)]
-#&gt;   sample_id         group_id timepoint_id order_rank
-#&gt; 1        S1          time:T0           T0          1
-#&gt; 2        S2          time:T1           T1          2
-#&gt; 3        S3          time:T0           T0          1
-#&gt; 4        S4          time:T2           T2          3
-#&gt; 5        S5 time:unlinked:S5         &lt;NA&gt;         NA
-#&gt; 6        S6          time:T1           T1          2</code></pre>
-<p>Time grouping adds <code>order_rank</code>, which is the field
-downstream tooling actually needs for ordered evaluation. The missing
-timepoint on <code>S5</code> stays visible as <code>NA</code>, so
-ordering is partial rather than pretended.</p>
-</div>
-<div id="composite-constraints" class="section level3">
-<h3>Composite constraints</h3>
-<pre class="r"><code>strict_constraint
-#&gt; &lt;split_constraint&gt; strict 
-#&gt;   Samples: 6 
-#&gt;   Groups: 3
-as.data.frame(strict_constraint)[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;constraint_type&quot;)]
-#&gt;   sample_id    group_id  constraint_type
-#&gt; 1        S1 component_1 composite_strict
-#&gt; 2        S2 component_1 composite_strict
-#&gt; 3        S3 component_1 composite_strict
-#&gt; 4        S4 component_2 composite_strict
-#&gt; 5        S5 component_3 composite_strict
-#&gt; 6        S6 component_1 composite_strict
-
-rule_based_constraint
-#&gt; &lt;split_constraint&gt; rule_based 
-#&gt;   Samples: 6 
-#&gt;   Groups: 4
-as.data.frame(rule_based_constraint)[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;constraint_type&quot;, &quot;group_label&quot;)]
-#&gt;   sample_id            group_id constraint_type group_label
-#&gt; 1        S1  composite_batch:B1           batch          B1
-#&gt; 2        S2  composite_batch:B2           batch          B2
-#&gt; 3        S3  composite_batch:B1           batch          B1
-#&gt; 4        S4  composite_batch:B3           batch          B3
-#&gt; 5        S5 composite_study:ST3           study         ST3
-#&gt; 6        S6  composite_batch:B1           batch          B1</code></pre>
-<p>The strict composite constraint uses transitive closure:
-<code>S1</code>, <code>S2</code>, <code>S3</code>, and <code>S6</code>
-end up in the same group because subject and batch links connect them
-into one dependency component. The rule-based composite constraint is
-different: it uses the highest-priority available dependency per sample,
-so <code>S5</code> falls back to study-level grouping instead of
-becoming a composite component.</p>
-</div>
-</div>
-<div id="time-ordering-can-come-from-precedence-edges-alone" class="section level2">
-<h2>Time ordering can come from precedence edges alone</h2>
-<p>If explicit <code>time_index</code> metadata are unavailable,
-<code>splitGraph</code> can still infer time order from
-<code>timepoint_precedes</code> edges.</p>
-<pre class="r"><code>precedence_meta &lt;- data.frame(
-  sample_id = c(&quot;S1&quot;, &quot;S2&quot;, &quot;S3&quot;),
-  subject_id = c(&quot;P1&quot;, &quot;P1&quot;, &quot;P2&quot;),
-  study_id = c(&quot;ST1&quot;, &quot;ST1&quot;, &quot;ST2&quot;),
-  timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T2&quot;),
-  stringsAsFactors = FALSE
-)
-
-precedence_graph &lt;- build_dependency_graph(
-  nodes = list(
-    create_nodes(precedence_meta, type = &quot;Sample&quot;, id_col = &quot;sample_id&quot;),
-    create_nodes(precedence_meta, type = &quot;Subject&quot;, id_col = &quot;subject_id&quot;),
-    create_nodes(precedence_meta, type = &quot;Study&quot;, id_col = &quot;study_id&quot;),
-    create_nodes(
-      data.frame(timepoint_id = c(&quot;T0&quot;, &quot;T1&quot;, &quot;T2&quot;), stringsAsFactors = FALSE),
-      type = &quot;Timepoint&quot;,
-      id_col = &quot;timepoint_id&quot;
-    )
-  ),
-  edges = list(
-    create_edges(
-      precedence_meta, &quot;sample_id&quot;, &quot;subject_id&quot;,
-      &quot;Sample&quot;, &quot;Subject&quot;, &quot;sample_belongs_to_subject&quot;
-    ),
-    create_edges(
-      precedence_meta, &quot;sample_id&quot;, &quot;study_id&quot;,
-      &quot;Sample&quot;, &quot;Study&quot;, &quot;sample_from_study&quot;
-    ),
-    create_edges(
-      precedence_meta, &quot;sample_id&quot;, &quot;timepoint_id&quot;,
-      &quot;Sample&quot;, &quot;Timepoint&quot;, &quot;sample_collected_at_timepoint&quot;
-    ),
-    create_edges(
-      data.frame(
-        from_timepoint = c(&quot;T0&quot;, &quot;T1&quot;),
-        to_timepoint = c(&quot;T1&quot;, &quot;T2&quot;),
-        stringsAsFactors = FALSE
-      ),
-      &quot;from_timepoint&quot;, &quot;to_timepoint&quot;,
-      &quot;Timepoint&quot;, &quot;Timepoint&quot;, &quot;timepoint_precedes&quot;
-    )
-  ),
-  graph_name = &quot;precedence_only_graph&quot;
-)
-
-precedence_time_constraint &lt;- derive_split_constraints(precedence_graph, mode = &quot;time&quot;)
-
-precedence_time_constraint$metadata$time_order_source
-#&gt; [1] &quot;timepoint_precedes&quot;
-as.data.frame(precedence_time_constraint)[, c(&quot;sample_id&quot;, &quot;timepoint_id&quot;, &quot;time_index&quot;, &quot;order_rank&quot;)]
-#&gt;   sample_id timepoint_id time_index order_rank
-#&gt; 1        S1           T0         NA          1
-#&gt; 2        S2           T1         NA          2
-#&gt; 3        S3           T2         NA          3</code></pre>
-<p>The important detail is that ordering is still derived, but the
-source is <code>timepoint_precedes</code> rather than
-<code>time_index</code>.</p>
-</div>
-<div id="translate-the-constraint-into-a-split-specification" class="section level2">
-<h2>Translate the constraint into a split specification</h2>
-<p>The graph-derived constraint is not the end of the workflow. The main
-handoff target is a canonical sample-level split specification — the
-<code>split_spec</code> class. Downstream tools consume it through their
-own adapters, so <code>split_spec</code> stays tool-agnostic.</p>
-<pre class="r"><code>split_spec &lt;- as_split_spec(strict_constraint, graph = graph)
-split_spec
-#&gt; &lt;split_spec&gt; composite 
+g &lt;- graph_from_metadata(meta, graph_name = &quot;cookbook&quot;)
+subject_constraint &lt;- derive_split_constraints(g, mode = &quot;subject&quot;)
+spec &lt;- as_split_spec(subject_constraint, graph = g)
+spec
+#&gt; &lt;split_spec&gt; subject 
 #&gt;   Samples: 6 
 #&gt;   Groups: 3 
-#&gt;   Recommended resampling: custom_grouped_cv
-
-as.data.frame(split_spec)[, c(
-  &quot;sample_id&quot;, &quot;group_id&quot;, &quot;batch_group&quot;, &quot;study_group&quot;, &quot;timepoint_id&quot;, &quot;order_rank&quot;
-)]
-#&gt;   sample_id    group_id batch_group study_group timepoint_id order_rank
-#&gt; 1        S1 component_1          B1         ST1           T0          1
-#&gt; 2        S2 component_1          B2         ST1           T1          2
-#&gt; 3        S3 component_1          B1         ST1           T0          1
-#&gt; 4        S4 component_2          B3         ST2           T2          3
-#&gt; 5        S5 component_3        &lt;NA&gt;         ST3         &lt;NA&gt;         NA
-#&gt; 6        S6 component_1          B1         ST2           T1          2
-
-split_spec_validation &lt;- validate_split_spec(split_spec)
-split_spec_validation
-#&gt; &lt;split_spec_validation&gt;
-#&gt;   Valid: TRUE 
-#&gt;   Issues: 0
-as.data.frame(split_spec_validation)
-#&gt; [1] issue_id   severity   code       message    n_affected details   
-#&gt; &lt;0 rows&gt; (or 0-length row.names)</code></pre>
-<p>This translation step is where the package becomes operational for
-downstream evaluation workflows:</p>
-<ul>
-<li><code>group_id</code> carries the split unit</li>
-<li><code>batch_group</code> and <code>study_group</code> are available
-for blocking</li>
-<li><code>order_rank</code> is available for ordered evaluation</li>
-<li>the generated object is validated before handoff</li>
-</ul>
+#&gt;   Recommended resampling: grouped_cv</code></pre>
+<p>The <code>sample_data</code> table is the contract:</p>
+<pre class="r"><code>as.data.frame(spec)[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;batch_group&quot;, &quot;order_rank&quot;)]
+#&gt;   sample_id   group_id batch_group order_rank
+#&gt; 1        S1 subject:P1          B1          1
+#&gt; 2        S2 subject:P1          B2          2
+#&gt; 3        S3 subject:P2          B1          1
+#&gt; 4        S4 subject:P2          B2          2
+#&gt; 5        S5 subject:P3          B1          1
+#&gt; 6        S6 subject:P3          B2          2</code></pre>
 </div>
-<div id="summarize-the-leakage-picture-in-one-object" class="section level2">
-<h2>Summarize the leakage picture in one object</h2>
-<p>The final helper combines graph validation, constraint diagnostics,
-and split-spec readiness into one summary object.</p>
-<pre class="r"><code>risk_summary &lt;- summarize_leakage_risks(
-  graph,
-  constraint = strict_constraint,
-  split_spec = split_spec
+<div id="adapter-1-base-r-leave-one-group-out-folds" class="section level2">
+<h2>Adapter 1 — base R: leave-one-group-out folds</h2>
+<p>This is the simplest meaningful adapter. It groups by whatever
+<code>split_spec$group_var</code> says is the split unit, and returns
+one held-out group per fold.</p>
+<pre class="r"><code>logo_folds &lt;- function(spec, observation_data, sample_id_col = &quot;sample_id&quot;) {
+  stopifnot(inherits(spec, &quot;split_spec&quot;))
+  if (!sample_id_col %in% names(observation_data)) {
+    stop(&quot;`observation_data` must contain a `&quot;, sample_id_col, &quot;` column.&quot;)
+  }
+
+  joined &lt;- merge(
+    observation_data,
+    spec$sample_data[, c(&quot;sample_id&quot;, spec$group_var)],
+    by.x = sample_id_col, by.y = &quot;sample_id&quot;, sort = FALSE
+  )
+  joined$.row &lt;- seq_len(nrow(joined))
+  groups &lt;- split(joined$.row, joined[[spec$group_var]])
+
+  lapply(names(groups), function(g) {
+    list(
+      group   = g,
+      train   = unlist(groups[setdiff(names(groups), g)], use.names = FALSE),
+      assess  = groups[[g]]
+    )
+  })
+}
+
+# Pretend we have an observation frame keyed by sample_id.
+obs &lt;- data.frame(
+  sample_id = meta$sample_id,
+  x = rnorm(nrow(meta)),
+  y = rbinom(nrow(meta), 1, 0.5)
 )
 
-risk_summary
-#&gt; &lt;leakage_risk_summary&gt;
-#&gt;   Overview: Detected 12 structural leakage diagnostics across validation, constraint, and split-spec readiness. 
-#&gt;   Diagnostics: 12
-as.data.frame(risk_summary)[, c(&quot;source&quot;, &quot;severity&quot;, &quot;category&quot;, &quot;message&quot;)]
-#&gt;        source severity                     category
-#&gt; 1  validation advisory     repeated_subject_samples
-#&gt; 2  validation advisory     repeated_subject_samples
-#&gt; 3  validation  warning  subject_cross_study_overlap
-#&gt; 4  validation advisory       per_dataset_featureset
-#&gt; 5  validation advisory shared_featureset_provenance
-#&gt; 6  validation advisory            heavy_batch_reuse
-#&gt; 7  constraint advisory   singleton_heavy_constraint
-#&gt; 8  split_spec advisory             split_spec_ready
-#&gt; 9  split_spec advisory           ordering_available
-#&gt; 10 split_spec advisory           blocking_available
-#&gt; 11 split_spec advisory           blocking_available
-#&gt; 12 split_spec advisory   split_spec_singleton_heavy
-#&gt;                                                                     message
-#&gt; 1                       Subject `subject:P1` is linked to multiple samples.
-#&gt; 2                       Subject `subject:P2` is linked to multiple samples.
-#&gt; 3                     Subject `subject:P2` appears across multiple studies.
-#&gt; 4  FeatureSet `featureset:FS_GLOBAL` was derived at the full-dataset scope.
-#&gt; 5      FeatureSet `featureset:FS_GLOBAL` is shared across multiple samples.
-#&gt; 6                           Batch `batch:B1` is reused across many samples.
-#&gt; 7            The derived split constraint is dominated by singleton groups.
-#&gt; 8                                   Split spec passed preflight validation.
-#&gt; 9     Split spec provides ordering through `order_rank` for 5 of 6 samples.
-#&gt; 10  Split spec provides blocking variable `batch_group` for 5 of 6 samples.
-#&gt; 11  Split spec provides blocking variable `study_group` for 6 of 6 samples.
-#&gt; 12                    Split spec grouping is dominated by singleton groups.</code></pre>
-<p>This is a useful stopping point before model training. It gives you
-one place to review whether the graph is structurally sound, whether the
-chosen constraint is overly singleton-heavy, and whether the downstream
-split spec is ready to use.</p>
+folds &lt;- logo_folds(spec, obs)
+length(folds)
+#&gt; [1] 3
+folds[[1]]
+#&gt; $group
+#&gt; [1] &quot;subject:P1&quot;
+#&gt; 
+#&gt; $train
+#&gt; [1] 3 4 5 6
+#&gt; 
+#&gt; $assess
+#&gt; [1] 1 2</code></pre>
+<p>That is the entire downstream contract: take <code>spec</code>, take
+an observation frame, return train/assess index lists. Anything more
+complicated is specific to a resampling library.</p>
 </div>
-<div id="downstream-handoff" class="section level2">
-<h2>Downstream handoff</h2>
-<p><code>split_spec</code> is the tool-agnostic handoff artifact.
-<code>splitGraph</code> does not know about any particular resampling
-package — downstream consumers provide their own adapters so
-<code>splitGraph</code> stays neutral. The typical end-to-end flow
-is:</p>
-<ol style="list-style-type: decimal">
-<li><code>graph_from_metadata()</code> (or the explicit constructor
-path) → typed <code>dependency_graph</code></li>
-<li><code>derive_split_constraints(g, mode = ...)</code> →
-<code>split_constraint</code></li>
-<li><code>as_split_spec(constraint, graph = g)</code> →
-<code>split_spec</code></li>
-<li>(optional) <code>write_split_spec(spec, path)</code> → JSON, for
-cross-session or cross-language handoff</li>
-<li>adapter in the downstream package → native resamples</li>
-</ol>
-<p>The <code>sample_data</code> frame carried by <code>split_spec</code>
-exposes exactly the columns downstream adapters consume:
-<code>sample_id</code> for joining against the observation frame,
-<code>group_id</code> for grouped resampling, <code>batch_group</code> /
-<code>study_group</code> for blocking, and <code>order_rank</code> for
-ordered evaluation. Adapters can be built by any package that wants to
-consume a <code>split_spec</code> — for example, on top of
-<code>rsample::group_vfold_cv()</code> (grouped CV keyed to
-<code>group_id</code>) or <code>rsample::rolling_origin()</code>
-(ordered evaluation keyed to <code>order_rank</code>).</p>
-<div id="persisting-the-handoff" class="section level3">
-<h3>Persisting the handoff</h3>
-<p>If the downstream consumer is in a different R session — or in a
-different language entirely — write the spec (and, if useful, the graph)
-to JSON. The format is documented under <code>?write_split_spec</code>
-and <code>?write_dependency_graph</code>, carries a
-<code>schema_version</code> field, and preserves <code>NA</code> values
-as JSON <code>null</code>.</p>
-<pre class="r"><code>spec_path &lt;- tempfile(fileext = &quot;.json&quot;)
-write_split_spec(split_spec, spec_path)
+<div id="adapter-2-rsamplegroup_vfold_cv" class="section level2">
+<h2>Adapter 2 — <code>rsample::group_vfold_cv()</code></h2>
+<p>Grouped CV keyed to <code>group_id</code>. The downstream package
+would typically ship something like this; the adapter is short enough
+that you can paste it into your own analysis script.</p>
+<pre class="r"><code>spec_to_group_vfold &lt;- function(spec, observation_data,
+                                v = NULL,
+                                sample_id_col = &quot;sample_id&quot;) {
+  stopifnot(inherits(spec, &quot;split_spec&quot;))
+  if (!requireNamespace(&quot;rsample&quot;, quietly = TRUE)) {
+    stop(&quot;Install rsample to use this adapter.&quot;)
+  }
 
-# Round-trip it back into R unchanged.
-spec_round_trip &lt;- read_split_spec(spec_path)
-identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
+  joined &lt;- merge(
+    observation_data,
+    spec$sample_data[, c(&quot;sample_id&quot;, spec$group_var)],
+    by.x = sample_id_col, by.y = &quot;sample_id&quot;, sort = FALSE
+  )
+
+  n_groups &lt;- length(unique(joined[[spec$group_var]]))
+  v &lt;- v %||% n_groups
+
+  rsample::group_vfold_cv(
+    data  = joined,
+    group = !!spec$group_var,
+    v     = v
+  )
+}</code></pre>
+<p><code>v = NULL</code> (the default above) gives leave-one-group-out,
+which is the right default when <code>splitGraph</code> has already
+grouped samples by their deepest leakage-relevant unit (e.g. subject).
+Pick a smaller <code>v</code> for k-fold-style grouped CV.</p>
+</div>
+<div id="adapter-3-rsamplerolling_origin" class="section level2">
+<h2>Adapter 3 — <code>rsample::rolling_origin()</code></h2>
+<p>When <code>spec$ordering_required</code> is <code>TRUE</code> (or
+<code>spec$time_var</code> is set), the right downstream object is an
+ordered split rather than a grouped one.</p>
+<pre class="r"><code>spec_to_rolling_origin &lt;- function(spec, observation_data,
+                                   sample_id_col = &quot;sample_id&quot;,
+                                   initial = NULL,
+                                   assess = 1L) {
+  stopifnot(inherits(spec, &quot;split_spec&quot;))
+  if (is.null(spec$time_var)) {
+    stop(&quot;This split_spec has no `time_var`; ordered evaluation is not available.&quot;)
+  }
+  if (!requireNamespace(&quot;rsample&quot;, quietly = TRUE)) {
+    stop(&quot;Install rsample to use this adapter.&quot;)
+  }
+
+  joined &lt;- merge(
+    observation_data,
+    spec$sample_data[, c(&quot;sample_id&quot;, spec$time_var)],
+    by.x = sample_id_col, by.y = &quot;sample_id&quot;, sort = FALSE
+  )
+  ordered &lt;- joined[order(joined[[spec$time_var]]), , drop = FALSE]
+
+  initial &lt;- initial %||% max(1L, floor(nrow(ordered) * 0.6))
+  rsample::rolling_origin(ordered, initial = initial, assess = assess)
+}</code></pre>
+<p>The key idea: <code>splitGraph</code> puts ordering information on
+the spec; the adapter is just a thin shim that consumes it.</p>
+</div>
+<div id="going-across-language-boundaries-via-json" class="section level2">
+<h2>Going across language boundaries via JSON</h2>
+<p>If the downstream consumer is not in R, write the spec to JSON and
+let the consumer (Python, Julia, a CLI) interpret it.</p>
+<pre class="r"><code>tmp &lt;- tempfile(fileext = &quot;.json&quot;)
+write_split_spec(spec, tmp)
+
+# Inspect the first ~30 lines so the on-disk format is visible.
+cat(readLines(tmp, n = 30), sep = &quot;\n&quot;)
+#&gt; {
+#&gt;   &quot;splitGraph_object&quot;: &quot;split_spec&quot;,
+#&gt;   &quot;schema_version&quot;: &quot;0.1.0&quot;,
+#&gt;   &quot;group_var&quot;: &quot;group_id&quot;,
+#&gt;   &quot;block_vars&quot;: [
+#&gt;     &quot;batch_group&quot;
+#&gt;   ],
+#&gt;   &quot;time_var&quot;: &quot;order_rank&quot;,
+#&gt;   &quot;ordering_required&quot;: false,
+#&gt;   &quot;constraint_mode&quot;: &quot;subject&quot;,
+#&gt;   &quot;constraint_strategy&quot;: &quot;subject&quot;,
+#&gt;   &quot;recommended_resampling&quot;: &quot;grouped_cv&quot;,
+#&gt;   &quot;metadata&quot;: {
+#&gt;     &quot;graph_name&quot;: &quot;cookbook&quot;,
+#&gt;     &quot;dataset_name&quot;: null,
+#&gt;     &quot;source_mode&quot;: &quot;subject&quot;,
+#&gt;     &quot;source_strategy&quot;: &quot;subject&quot;,
+#&gt;     &quot;relations_used&quot;: &quot;sample_belongs_to_subject&quot;,
+#&gt;     &quot;n_samples&quot;: 6,
+#&gt;     &quot;n_groups&quot;: 3,
+#&gt;     &quot;warnings&quot;: [],
+#&gt;     &quot;enriched_from_graph&quot;: true
+#&gt;   },
+#&gt;   &quot;sample_data&quot;: [
+#&gt;     {
+#&gt;       &quot;sample_id&quot;: &quot;S1&quot;,
+#&gt;       &quot;sample_node_id&quot;: &quot;sample:S1&quot;,
+#&gt;       &quot;group_id&quot;: &quot;subject:P1&quot;,
+#&gt;       &quot;primary_group&quot;: &quot;subject:P1&quot;,
+#&gt;       &quot;batch_group&quot;: &quot;B1&quot;,
+
+# And read it back exactly.
+spec2 &lt;- read_split_spec(tmp)
+identical(spec$sample_data$group_id, spec2$sample_data$group_id)
 #&gt; [1] TRUE
 
-unlink(spec_path)</code></pre>
-<p>For three small worked examples of consuming a
-<code>split_spec</code> from downstream code (a base-R
-leave-one-group-out adapter and illustrative <code>rsample</code>
-adapters), see the companion vignette:</p>
-<pre class="r"><code>vignette(&quot;adapter-cookbook&quot;, package = &quot;splitGraph&quot;)</code></pre>
+unlink(tmp)</code></pre>
+<p>The same pair exists for <code>dependency_graph</code>
+(<code>write_dependency_graph()</code> /
+<code>read_dependency_graph()</code>). Both formats are documented under
+<code>?write_split_spec</code> and <code>?write_dependency_graph</code>
+and include a <code>schema_version</code> field so consumers can detect
+drift.</p>
 </div>
-</div>
-<div id="case-studies" class="section level2">
-<h2>Case studies</h2>
-<p>The end-to-end workflow above shows the package surface. The case
-studies below show how the same graph leads to different evaluation
-decisions depending on the scientific question.</p>
-<div id="case-study-1-repeated-subjects-in-a-longitudinal-cohort" class="section level3">
-<h3>Case study 1: repeated subjects in a longitudinal cohort</h3>
-<p>Suppose the real question is whether future observations from the
-same subject should be held out from training. In this setting, subject
-reuse and time ordering both matter, but they solve different
-problems.</p>
-<pre class="r"><code>subject_groups &lt;- grouping_vector(subject_constraint)
-time_groups &lt;- time_constraint$sample_map[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;timepoint_id&quot;, &quot;order_rank&quot;)]
-
-subject_groups
-#&gt;           S1           S2           S3           S4           S5           S6 
-#&gt; &quot;subject:P1&quot; &quot;subject:P1&quot; &quot;subject:P2&quot; &quot;subject:P3&quot; &quot;subject:P4&quot; &quot;subject:P2&quot;
-time_groups
-#&gt;   sample_id         group_id timepoint_id order_rank
-#&gt; 1        S1          time:T0           T0          1
-#&gt; 2        S2          time:T1           T1          2
-#&gt; 3        S3          time:T0           T0          1
-#&gt; 4        S4          time:T2           T2          3
-#&gt; 5        S5 time:unlinked:S5         &lt;NA&gt;         NA
-#&gt; 6        S6          time:T1           T1          2</code></pre>
-<p>Interpretation:</p>
+<div id="when-you-need-a-custom-adapter" class="section level2">
+<h2>When you need a custom adapter</h2>
+<p>The only assumptions an adapter has to honor:</p>
 <ul>
-<li><code>S1</code> and <code>S2</code> share subject <code>P1</code>,
-so subject-grouped evaluation keeps them together.</li>
-<li><code>S3</code> and <code>S6</code> share subject <code>P2</code>,
-so they also stay together under a subject-based split.</li>
-<li>time grouping adds a different axis: <code>T0</code>,
-<code>T1</code>, and <code>T2</code> become ordered units with explicit
-<code>order_rank</code>.</li>
+<li><code>split_spec$sample_data</code> is keyed by
+<code>sample_id</code> (character).</li>
+<li><code>split_spec$group_var</code> is the column that holds the
+splitting unit.</li>
+<li><code>split_spec$block_vars</code> are present-but-coarser blocking
+columns.</li>
+<li><code>split_spec$time_var</code>, when non-<code>NULL</code>,
+defines the ordering.</li>
+<li><code>split_spec$recommended_resampling</code> is a hint, not a
+contract — your adapter is free to ignore it.</li>
 </ul>
-<p>If the leakage concern is repeated measurements from the same
-individual, use the subject constraint. If the evaluation question is
-prospective prediction, the time constraint adds the ordering
-information you need.</p>
-</div>
-<div id="case-study-2-a-subject-reused-across-studies" class="section level3">
-<h3>Case study 2: a subject reused across studies</h3>
-<p>The graph intentionally includes subject <code>P2</code> in both
-<code>ST1</code> and <code>ST2</code>. A study-only split would treat
-those studies as separate units, but the graph shows that subject
-overlap breaks the intended independence.</p>
-<pre class="r"><code>cross_study_issues &lt;- as.data.frame(validation)[
-  as.data.frame(validation)$code == &quot;subject_cross_study_overlap&quot;,
-  c(&quot;severity&quot;, &quot;code&quot;, &quot;message&quot;)
-]
-
-p2_shared &lt;- detect_shared_dependencies(
-  graph,
-  via = &quot;Subject&quot;,
-  samples = c(&quot;S3&quot;, &quot;S6&quot;)
-)
-
-study_only_map &lt;- study_constraint$sample_map[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;group_label&quot;)]
-strict_map &lt;- strict_constraint$sample_map[, c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;constraint_type&quot;)]
-
-cross_study_issues
-#&gt;   severity                        code
-#&gt; 3  warning subject_cross_study_overlap
-#&gt;                                                 message
-#&gt; 3 Subject `subject:P2` appears across multiple studies.
-as.data.frame(p2_shared)
-#&gt;   sample_id_1 sample_id_2 sample_node_id_1 sample_node_id_2 shared_node_id
-#&gt; 1          S3          S6        sample:S3        sample:S6     subject:P2
-#&gt;   shared_node_type                 edge_type
-#&gt; 1          Subject sample_belongs_to_subject
-study_only_map[study_only_map$sample_id %in% c(&quot;S3&quot;, &quot;S6&quot;), ]
-#&gt;   sample_id  group_id group_label
-#&gt; 3        S3 study:ST1         ST1
-#&gt; 6        S6 study:ST2         ST2
-strict_map[strict_map$sample_id %in% c(&quot;S3&quot;, &quot;S6&quot;), ]
-#&gt;   sample_id    group_id  constraint_type
-#&gt; 3        S3 component_1 composite_strict
-#&gt; 6        S6 component_1 composite_strict</code></pre>
-<p>Interpretation:</p>
-<ul>
-<li>validation surfaces the cross-study subject overlap directly</li>
-<li>the shared-dependency query confirms that <code>S3</code> and
-<code>S6</code> are linked through the same subject</li>
-<li>a study-only split would place them in different groups
-(<code>ST1</code> versus <code>ST2</code>)</li>
-<li>the strict composite constraint correctly keeps them in the same
-dependency component</li>
-</ul>
-<p>This is exactly the kind of failure mode <code>splitGraph</code> is
-designed to expose: metadata columns suggest a legitimate study split,
-but graph structure shows that the split would still leak subject
-information.</p>
-</div>
-<div id="case-study-3-partially-observed-technical-metadata" class="section level3">
-<h3>Case study 3: partially observed technical metadata</h3>
-<p>Real metadata are rarely complete. Here, <code>S5</code> has no batch
-assignment and no timepoint assignment. The package does not pretend
-those fields exist. It keeps the sample visible and tells you how the
-split logic handled it.</p>
-<pre class="r"><code>batch_missing &lt;- batch_constraint$sample_map[
-  batch_constraint$sample_map$sample_id == &quot;S5&quot;,
-  c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;group_label&quot;, &quot;explanation&quot;)
-]
-
-rule_based_missing &lt;- rule_based_constraint$sample_map[
-  rule_based_constraint$sample_map$sample_id == &quot;S5&quot;,
-  c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;constraint_type&quot;, &quot;group_label&quot;, &quot;explanation&quot;)
-]
-
-split_spec_missing &lt;- as.data.frame(split_spec)[
-  as.data.frame(split_spec)$sample_id == &quot;S5&quot;,
-  c(&quot;sample_id&quot;, &quot;group_id&quot;, &quot;batch_group&quot;, &quot;study_group&quot;, &quot;timepoint_id&quot;, &quot;order_rank&quot;)
-]
-
-batch_missing
-#&gt;   sample_id          group_id group_label
-#&gt; 5        S5 batch:unlinked:S5 unlinked_S5
-#&gt;                                                                          explanation
-#&gt; 5 No batch assignment was available; sample retained as an unlinked singleton group.
-rule_based_missing
-#&gt;   sample_id            group_id constraint_type group_label
-#&gt; 5        S5 composite_study:ST3           study         ST3
-#&gt;                                                                                                                                                  explanation
-#&gt; 5 Composite rule-based grouping selected study based on priority order batch &gt; study &gt; subject &gt; time -&gt; ST3. Additional available dependencies: subject=P4.
-split_spec_missing
-#&gt;   sample_id    group_id batch_group study_group timepoint_id order_rank
-#&gt; 5        S5 component_3        &lt;NA&gt;         ST3         &lt;NA&gt;         NA</code></pre>
-<p>Interpretation:</p>
-<ul>
-<li>batch-based splitting keeps <code>S5</code> as an explicit singleton
-because batch metadata are missing</li>
-<li>the rule-based composite strategy falls back to study-level grouping
-for <code>S5</code></li>
-<li>the translated split specification preserves the missing batch and
-time fields as <code>NA</code> rather than silently inventing
-values</li>
-</ul>
-<p>That behavior matters because incomplete metadata are common.
-<code>splitGraph</code> stays strict about what is known, but still
-produces a usable, inspectable split object.</p>
-</div>
-<div id="case-study-4-choosing-a-defensible-split-strategy" class="section level3">
-<h3>Case study 4: choosing a defensible split strategy</h3>
-<p>A typical practical question is not “what can the package compute?”
-but “which constraint should I actually use?” The answer depends on
-which dependency source is scientifically unacceptable to leak across
-train and test.</p>
-<pre class="r"><code>strategy_summary &lt;- data.frame(
-  constraint = c(&quot;subject&quot;, &quot;batch&quot;, &quot;study&quot;, &quot;time&quot;, &quot;composite_strict&quot;, &quot;composite_rule&quot;),
-  groups = c(
-    length(unique(subject_constraint$sample_map$group_id)),
-    length(unique(batch_constraint$sample_map$group_id)),
-    length(unique(study_constraint$sample_map$group_id)),
-    length(unique(time_constraint$sample_map$group_id)),
-    length(unique(strict_constraint$sample_map$group_id)),
-    length(unique(rule_based_constraint$sample_map$group_id))
-  ),
-  warnings = c(
-    length(or_empty(subject_constraint$metadata$warnings)),
-    length(or_empty(batch_constraint$metadata$warnings)),
-    length(or_empty(study_constraint$metadata$warnings)),
-    length(or_empty(time_constraint$metadata$warnings)),
-    length(or_empty(strict_constraint$metadata$warnings)),
-    length(or_empty(rule_based_constraint$metadata$warnings))
-  ),
-  recommended_resampling = c(
-    as_split_spec(subject_constraint, graph = graph)$recommended_resampling,
-    as_split_spec(batch_constraint, graph = graph)$recommended_resampling,
-    as_split_spec(study_constraint, graph = graph)$recommended_resampling,
-    as_split_spec(time_constraint, graph = graph)$recommended_resampling,
-    as_split_spec(strict_constraint, graph = graph)$recommended_resampling,
-    as_split_spec(rule_based_constraint, graph = graph)$recommended_resampling
-  ),
-  stringsAsFactors = FALSE
-)
-
-strategy_summary
-#&gt;         constraint groups warnings recommended_resampling
-#&gt; 1          subject      4        0             grouped_cv
-#&gt; 2            batch      4        1             blocked_cv
-#&gt; 3            study      3        0    leave_one_group_out
-#&gt; 4             time      4        1          ordered_split
-#&gt; 5 composite_strict      3        0      custom_grouped_cv
-#&gt; 6   composite_rule      4        0             grouped_cv</code></pre>
-<p>Interpretation:</p>
-<ul>
-<li>subject grouping is the right default when repeated individuals are
-the dominant leakage source</li>
-<li>batch grouping is appropriate when technical runs are the main
-contamination risk</li>
-<li>study grouping is useful for cross-study generalization only when no
-higher level dependency crosses study boundaries</li>
-<li>strict composite grouping is the safest choice when multiple
-dependency sources can connect samples transitively</li>
-<li>rule-based composite grouping is a pragmatic fallback when you want
-a single deterministic hierarchy over partially observed metadata</li>
-</ul>
-<p>The package does not choose the scientific objective for you. It
-makes the trade-off visible and auditable.</p>
-</div>
-</div>
-<div id="when-splitgraph-is-useful" class="section level2">
-<h2>When <code>splitGraph</code> is useful</h2>
-<p><code>splitGraph</code> is a good fit when:</p>
-<ul>
-<li>sample relationships are scientifically meaningful and must
-influence evaluation</li>
-<li>metadata contain repeated subjects, shared batches, multiple
-studies, or temporal structure</li>
-<li>feature provenance or outcome level matters for leakage
-assessment</li>
-<li>you want deterministic, inspectable split constraints instead of ad
-hoc grouping code</li>
-</ul>
-</div>
-<div id="what-splitgraph-is-not-for" class="section level2">
-<h2>What <code>splitGraph</code> is not for</h2>
-<p><code>splitGraph</code> is not:</p>
-<ul>
-<li>a general biological network analysis package</li>
-<li>a model training framework</li>
-<li>a resampling engine</li>
-<li>a substitute for downstream performance auditing</li>
-</ul>
-<p>Its value is earlier in the workflow: it makes dependency structure
-explicit so that the split design itself can be justified.</p>
-</div>
-<div id="takeaway" class="section level2">
-<h2>Takeaway</h2>
-<p>If you already know your data have repeated subjects, reused batches,
-temporal ordering, or shared feature provenance, then you already have a
-graph problem whether you model it explicitly or not.
-<code>splitGraph</code> is useful because it turns that hidden graph
-into an object you can validate, query, and convert into a split design
-that downstream tooling can trust.</p>
+<p>That is the whole interface. As long as those four attributes are
+honored, anything is a valid downstream consumer.</p>
 </div>
 
 
