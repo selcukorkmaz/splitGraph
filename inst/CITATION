@@ -1,11 +1,13 @@
 citHeader("To cite splitGraph in publications use:")
 
-year <- sub("-.*", "", if (is.null(meta$Date)) format(Sys.Date(), "%Y") else meta$Date)
-vers <- paste("R package version", meta$Version)
+date <- meta[["Date"]]
+year <- sub("-.*", "", if (is.null(date)) format(Sys.Date(), "%Y") else date)
+vers <- paste("R package version", meta[["Version"]])
 
 bibentry(
   bibtype = "Manual",
-  title   = "{splitGraph}: Dataset Dependency Graphs for Leakage-Aware Evaluation",
+  title   = paste("{splitGraph}: Dataset Dependency Graphs",
+                  "for Leakage-Aware Evaluation"),
   author  = person("Selcuk", "Korkmaz", email = "selcukorkmaz@gmail.com",
                    comment = c(ORCID = "0000-0003-4632-6850")),
   year    = year,

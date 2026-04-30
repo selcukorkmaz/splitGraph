@@ -31,7 +31,9 @@
       "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); rmarkdown::render\\(\"inst/doc/adapter-cookbook.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---ADAPTER OK---\\\\n\"\\); rmarkdown::render\\(\"inst/doc/leakage-aware-workflow.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---LEAKAGE OK---\\\\n\"\\)')",
       "Bash(R CMD check --no-manual splitGraph_0.2.0.tar.gz)",
       "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); rmarkdown::render\\(\"inst/doc/leakage-aware-workflow.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---LEAKAGE OK---\\\\n\"\\)')",
-      "Bash(grep -nA 3 \"subject_has_outcome\" R/graph-build-auto.R)"
+      "Bash(grep -nA 3 \"subject_has_outcome\" R/graph-build-auto.R)",
+      "Bash(Rscript -e 'tools::.parse_CITATION_file\\(\"inst/CITATION\", meta = packageDescription\\(\"splitGraph\"\\)\\)')",
+      "Bash(Rscript *)"
     ]
   }
 }
