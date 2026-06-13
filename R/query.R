@@ -116,7 +116,7 @@
   edge_data[matches, , drop = FALSE]
 }
 
-.depgraph_format_paths <- function(graph, path_node_ids, edge_data, query_name, params) {
+.depgraph_format_paths <- function(graph, path_node_ids, edge_data, query_name, params, metadata = list()) {
   node_data <- graph$nodes$data
   rows <- list()
   used_node_ids <- character()
@@ -131,7 +131,7 @@
       edge_id = character(),
       edge_type = character(),
       stringsAsFactors = FALSE
-    )))
+    ), metadata = metadata))
   }
 
   row_idx <- 1L
@@ -180,7 +180,8 @@
     params = params,
     node_ids = unique(used_node_ids),
     edge_ids = unique(used_edge_ids),
-    table = table
+    table = table,
+    metadata = metadata
   )
 }
 
@@ -480,6 +481,13 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
   edge_data <- .depgraph_subset_edges(graph, edge_types = edge_types)
   path_nodes <- list()
   path_idx <- 1L
+  # Truncation tracking: TRUE whenever a returned path reaches the cap in
+  # edges, which means longer simple paths between the same endpoints may
+  # have been suppressed. Conservative — never a false negative when a
+  # finite cap was binding, may flag false positives (returned paths at the
+  # boundary that happen to have no longer siblings).
+  cap_binding <- (cutoff_value != -1L)
+  hit_cap <- FALSE
 
   for (from_id in from_ids) {
     for (to_id in to_ids) {
@@ -503,6 +511,9 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
             next
           }
         }
+        if (cap_binding && (length(node_ids_in_path) - 1L) >= cutoff_value) {
+          hit_cap <- TRUE
+        }
         path_nodes[[path_idx]] <- node_ids_in_path
         path_idx <- path_idx + 1L
       }
@@ -514,7 +525,11 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
     path_node_ids = path_nodes,
     edge_data = edge_data,
     query_name = "query_paths",
-    params = list(from = from_ids, to = to_ids, edge_types = edge_types, node_types = node_types, mode = mode, max_length = max_length)
+    params = list(from = from_ids, to = to_ids, edge_types = edge_types, node_types = node_types, mode = mode, max_length = max_length),
+    metadata = list(
+      truncated = isTRUE(cap_binding && hit_cap),
+      max_length = if (cap_binding) as.integer(cutoff_value) else Inf
+    )
   )
 }
 

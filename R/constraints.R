@@ -433,7 +433,52 @@
 
   if (!is.null(samples)) {
     sample_nodes <- .depgraph_constraint_samples(graph, samples)
-    table <- table[table$sample_node_id %in% sample_nodes$node_id, , drop = FALSE]
+    keep_ids <- sample_nodes$node_id
+
+    # Recompute components within the requested subset only. Without this,
+    # two in-subset samples connected only through an out-of-subset sample
+    # would inherit a shared component_id from the full-graph projection,
+    # silently leaking out-of-subset structure into the produced split.
+    projection <- components$metadata$projection_edges
+    if (is.null(projection) || nrow(projection) == 0L) {
+      projection <- data.frame(
+        sample_node_id_1 = character(0),
+        sample_node_id_2 = character(0),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      projection <- projection[
+        projection$sample_node_id_1 %in% keep_ids &
+          projection$sample_node_id_2 %in% keep_ids,
+        , drop = FALSE
+      ]
+    }
+
+    subset_graph <- if (nrow(projection) == 0L) {
+      igraph::make_empty_graph(n = length(keep_ids), directed = FALSE)
+    } else {
+      igraph::graph_from_data_frame(
+        d = data.frame(
+          from = projection$sample_node_id_1,
+          to = projection$sample_node_id_2,
+          stringsAsFactors = FALSE
+        ),
+        vertices = data.frame(name = keep_ids, stringsAsFactors = FALSE),
+        directed = FALSE
+      )
+    }
+    igraph::V(subset_graph)$name <- keep_ids
+
+    sub_components <- igraph::components(subset_graph)
+    membership_idx <- as.integer(sub_components$membership[keep_ids])
+    table <- data.frame(
+      sample_id = sample_nodes$node_key,
+      sample_node_id = keep_ids,
+      component_id = paste0("component_", membership_idx),
+      component_size = as.integer(sub_components$csize[membership_idx]),
+      stringsAsFactors = FALSE
+    )
+    components$metadata$projection_edges <- projection
   }
 
   sample_map <- data.frame(

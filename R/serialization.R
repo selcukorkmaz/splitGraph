@@ -38,14 +38,24 @@
 }
 
 .depgraph_iso_to_posix <- function(x) {
-  if (is.null(x) || identical(x, NA_character_) || (length(x) == 1L && is.na(x))) {
-    return(Sys.time())
+  na_posix <- .POSIXct(NA_real_, tz = "UTC")
+  if (is.null(x) || length(x) == 0L) {
+    return(na_posix)
   }
-  parsed <- suppressWarnings(as.POSIXct(x, format = "%Y-%m-%dT%H:%M:%OS%z"))
+  if (length(x) == 1L && is.na(x)) {
+    return(na_posix)
+  }
+  try_parse <- function(call_expr) {
+    tryCatch(
+      suppressWarnings(call_expr),
+      error = function(e) na_posix
+    )
+  }
+  parsed <- try_parse(as.POSIXct(x, format = "%Y-%m-%dT%H:%M:%OS%z"))
   if (length(parsed) == 0L || is.na(parsed)) {
-    parsed <- suppressWarnings(as.POSIXct(x))
+    parsed <- try_parse(as.POSIXct(x))
   }
-  if (is.na(parsed)) Sys.time() else parsed
+  if (length(parsed) == 0L || is.na(parsed)) na_posix else parsed
 }
 
 .depgraph_check_schema_version <- function(observed, what) {

@@ -356,7 +356,44 @@ validate_split_spec <- function(x) {
   )
 }
 
-.leakage_summary_from_validation <- function(validation) {
+.depgraph_constraint_via_modes <- function(constraint) {
+  # Constraints store composite `via` as capitalized node types
+  # (e.g., "Subject"); convert to lower-case mode names for severance lookup.
+  via <- constraint$metadata$via %||% character()
+  if (length(via) == 0L) return(character())
+  reverse <- stats::setNames(
+    names(.depgraph_constraint_mode_map),
+    unname(.depgraph_constraint_mode_map)
+  )
+  matched <- reverse[as.character(via)]
+  unname(matched[!is.na(matched)])
+}
+
+# Map a validation issue code to whether the chosen constraint mode (+ optional
+# composite `via`) severs that leakage path. Returns TRUE/FALSE for codes the
+# package can reason about, NA for codes whose severance is not a function of
+# split-mode (structural errors, etc.) or when no constraint is supplied.
+.leakage_severed_by_constraint <- function(code, mode = NULL, via_modes = character()) {
+  if (is.null(mode) || !nzchar(mode)) return(NA)
+  via_modes <- as.character(via_modes %||% character())
+  composite_covers <- function(needed) {
+    identical(mode, "composite") && needed %in% via_modes
+  }
+  switch(
+    as.character(code),
+    repeated_subject_samples     = identical(mode, "subject") || composite_covers("subject"),
+    subject_cross_study_overlap  = mode %in% c("subject", "study") ||
+                                     composite_covers("subject") ||
+                                     composite_covers("study"),
+    heavy_batch_reuse            = identical(mode, "batch") || composite_covers("batch"),
+    missing_time_ordering        = identical(mode, "time") || composite_covers("time"),
+    per_dataset_featureset       = FALSE,
+    shared_featureset_provenance = FALSE,
+    NA
+  )
+}
+
+.leakage_summary_from_validation <- function(validation, constraint = NULL) {
   if (nrow(validation$issues) == 0L) {
     return(data.frame(
       severity = character(),
@@ -364,9 +401,21 @@ validate_split_spec <- function(x) {
       message = character(),
       source = character(),
       n_affected = integer(),
+      severed = logical(),
       stringsAsFactors = FALSE
     ))
   }
+
+  mode <- if (!is.null(constraint)) as.character(constraint$metadata$mode %||% NA) else NA_character_
+  via_modes <- if (!is.null(constraint)) .depgraph_constraint_via_modes(constraint) else character()
+
+  severed <- vapply(
+    validation$issues$code,
+    function(code) {
+      .leakage_severed_by_constraint(code, mode = if (is.na(mode)) NULL else mode, via_modes = via_modes)
+    },
+    logical(1)
+  )
 
   data.frame(
     severity = validation$issues$severity,
@@ -374,20 +423,23 @@ validate_split_spec <- function(x) {
     message = validation$issues$message,
     source = "validation",
     n_affected = vapply(validation$issues$node_ids, length, integer(1)),
+    severed = severed,
     stringsAsFactors = FALSE
   )
 }
 
 .leakage_summary_from_constraint <- function(constraint) {
+  empty <- data.frame(
+    severity = character(),
+    category = character(),
+    message = character(),
+    source = character(),
+    n_affected = integer(),
+    severed = logical(),
+    stringsAsFactors = FALSE
+  )
   if (is.null(constraint)) {
-    return(data.frame(
-      severity = character(),
-      category = character(),
-      message = character(),
-      source = character(),
-      n_affected = integer(),
-      stringsAsFactors = FALSE
-    ))
+    return(empty)
   }
 
   diagnostics <- list()
@@ -400,6 +452,7 @@ validate_split_spec <- function(x) {
         message = warning_msg,
         source = "constraint",
         n_affected = nrow(constraint$sample_map),
+        severed = NA,
         stringsAsFactors = FALSE
       )
     }
@@ -414,20 +467,14 @@ validate_split_spec <- function(x) {
         message = "The derived split constraint is dominated by singleton groups.",
         source = "constraint",
         n_affected = sum(group_sizes == 1L),
+        severed = NA,
         stringsAsFactors = FALSE
       )
     }
   }
 
   if (length(diagnostics) == 0L) {
-    return(data.frame(
-      severity = character(),
-      category = character(),
-      message = character(),
-      source = character(),
-      n_affected = integer(),
-      stringsAsFactors = FALSE
-    ))
+    return(empty)
   }
 
   out <- do.call(rbind, diagnostics)
@@ -436,18 +483,17 @@ validate_split_spec <- function(x) {
 }
 
 .leakage_summary_from_split_spec <- function(split_spec) {
+  empty <- data.frame(
+    severity = character(),
+    category = character(),
+    message = character(),
+    source = character(),
+    n_affected = integer(),
+    severed = logical(),
+    stringsAsFactors = FALSE
+  )
   if (is.null(split_spec)) {
-    return(list(
-      diagnostics = data.frame(
-        severity = character(),
-        category = character(),
-        message = character(),
-        source = character(),
-        n_affected = integer(),
-        stringsAsFactors = FALSE
-      ),
-      summary = list()
-    ))
+    return(list(diagnostics = empty, summary = list()))
   }
 
   validation <- validate_split_spec(split_spec)
@@ -459,6 +505,7 @@ validate_split_spec <- function(x) {
       message = "Split spec passed preflight validation.",
       source = "split_spec",
       n_affected = nrow(split_spec$sample_data),
+      severed = NA,
       stringsAsFactors = FALSE
     )
   } else {
@@ -468,6 +515,7 @@ validate_split_spec <- function(x) {
       message = validation$issues$message,
       source = "split_spec",
       n_affected = validation$issues$n_affected,
+      severed = NA,
       stringsAsFactors = FALSE
     )
   }
@@ -483,6 +531,7 @@ validate_split_spec <- function(x) {
       ),
       source = "split_spec",
       n_affected = complete_ordering,
+      severed = NA,
       stringsAsFactors = FALSE
     )
   }
@@ -503,6 +552,7 @@ validate_split_spec <- function(x) {
         ),
         source = "split_spec",
         n_affected = available,
+        severed = NA,
         stringsAsFactors = FALSE
       )
     }
@@ -516,6 +566,7 @@ validate_split_spec <- function(x) {
       message = "Split spec grouping is dominated by singleton groups.",
       source = "split_spec",
       n_affected = sum(group_sizes == 1L),
+      severed = NA,
       stringsAsFactors = FALSE
     )
   }
@@ -550,7 +601,7 @@ summarize_leakage_risks <- function(graph, constraint = NULL, split_spec = NULL,
   }
 
   validation <- validation %||% validate_graph(graph)
-  validation_diag <- .leakage_summary_from_validation(validation)
+  validation_diag <- .leakage_summary_from_validation(validation, constraint = constraint)
   constraint_diag <- .leakage_summary_from_constraint(constraint)
   split_spec_info <- .leakage_summary_from_split_spec(split_spec)
 

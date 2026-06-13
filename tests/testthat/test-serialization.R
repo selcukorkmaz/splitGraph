@@ -110,6 +110,43 @@ test_that("round-trip preserves validation_overrides on the graph", {
   expect_true(isTRUE(g2$metadata$validation_overrides$allow_multi_subject_samples))
 })
 
+test_that("read_dependency_graph returns NA for unparseable or missing created_at (no silent Sys.time fallback)", {
+  # Regression test for C6: .depgraph_iso_to_posix used to fall back to
+  # Sys.time() on parse failure and on NULL/NA input, silently turning a
+  # corrupted or missing timestamp into "now". That destroys provenance.
+  skip_if_no_jsonlite()
+  g <- make_round_trip_graph()
+  tmp <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp), add = TRUE)
+  write_dependency_graph(g, tmp)
+
+  payload <- jsonlite::fromJSON(tmp, simplifyVector = FALSE)
+
+  # Case 1: malformed timestamp must not become "now".
+  bad <- payload
+  bad$metadata$created_at <- "not-a-real-date"
+  bad_path <- tempfile(fileext = ".json")
+  on.exit(unlink(bad_path), add = TRUE)
+  jsonlite::write_json(bad, bad_path, auto_unbox = TRUE, null = "null", na = "null")
+
+  g_bad <- read_dependency_graph(bad_path)
+  expect_true(is.na(g_bad$metadata$created_at),
+              info = "Malformed created_at must read back as NA, not Sys.time().")
+  expect_s3_class(g_bad$metadata$created_at, "POSIXct")
+
+  # Case 2: missing/null timestamp must also be NA, not Sys.time().
+  missing <- payload
+  missing$metadata$created_at <- NULL
+  missing_path <- tempfile(fileext = ".json")
+  on.exit(unlink(missing_path), add = TRUE)
+  jsonlite::write_json(missing, missing_path, auto_unbox = TRUE, null = "null", na = "null")
+
+  g_missing <- read_dependency_graph(missing_path)
+  expect_true(is.na(g_missing$metadata$created_at),
+              info = "Missing created_at must read back as NA, not Sys.time().")
+  expect_s3_class(g_missing$metadata$created_at, "POSIXct")
+})
+
 test_that("read_dependency_graph rejects malformed or wrong-type JSON", {
   skip_if_no_jsonlite()
   bad <- tempfile(fileext = ".json")

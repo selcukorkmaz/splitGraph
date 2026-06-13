@@ -302,6 +302,33 @@ test_that("composite strict constraints use transitive dependency closure", {
   expect_equal(result$metadata$strategy, "strict")
 })
 
+test_that("composite strict respects sample subset (no bridging through excluded samples)", {
+  # Regression test for C1: .derive_composite_strict_constraints used to
+  # compute components over the WHOLE graph, then filter to `samples` — so two
+  # in-subset samples connected only through an out-of-subset sample silently
+  # landed in the same group, leaking out-of-subset structure into the split.
+  graph <- make_constraint_graph("index")
+  # Full-graph projection via Subject + Batch links S1, S2, S3 (S1-P1-S2;
+  # S1-B1-S3). Within the subset c("S2","S3") alone there is no shared Subject
+  # and no shared Batch, so the two samples must NOT share a group_id.
+  result <- derive_split_constraints(
+    graph,
+    mode = "composite",
+    strategy = "strict",
+    via = c("Subject", "Batch"),
+    samples = c("S2", "S3")
+  )
+
+  expect_equal(nrow(result$sample_map), 2L)
+  g_s2 <- result$sample_map$group_id[result$sample_map$sample_id == "S2"]
+  g_s3 <- result$sample_map$group_id[result$sample_map$sample_id == "S3"]
+  expect_false(
+    identical(g_s2, g_s3),
+    info = "S2 and S3 share no Subject or Batch within the subset; they must not be bridged through excluded S1."
+  )
+  expect_equal(result$metadata$n_groups, 2L)
+})
+
 test_that("composite rule-based constraints follow priority fallback rules", {
   graph <- make_constraint_graph("index")
   result <- derive_split_constraints(

@@ -139,6 +139,52 @@ test_that("validate_split_spec is deterministic across repeated runs", {
   expect_identical(validation_a$issues$issue_id, validation_b$issues$issue_id)
 })
 
+test_that("summarize_leakage_risks marks validation risks not severed by the chosen constraint", {
+  # Regression test for C2: summarize_leakage_risks reused validate_graph()
+  # but never asked whether the CHOSEN constraint mode actually severs each
+  # reported leakage path. A user picking `mode = "subject"` on a graph with
+  # heavy batch reuse could ship a spec whose splits leak batch effects, and
+  # the summary would not flag the mismatch.
+  meta <- data.frame(
+    sample_id  = paste0("S", 1:6),
+    subject_id = paste0("P", 1:6),                          # each subject distinct
+    batch_id   = c("B1", "B1", "B1", "B2", "B2", "B3"),     # B1 holds 3 of 6
+    stringsAsFactors = FALSE
+  )
+  graph <- graph_from_metadata(meta, graph_name = "heavy_batch_demo")
+
+  subject_c <- derive_split_constraints(graph, mode = "subject")
+  summary_subject <- summarize_leakage_risks(graph, constraint = subject_c)
+
+  expect_true("severed" %in% names(summary_subject$diagnostics),
+              info = "Diagnostics must carry a `severed` column when a constraint is provided.")
+  heavy_row_subject <- summary_subject$diagnostics[
+    summary_subject$diagnostics$category == "heavy_batch_reuse", , drop = FALSE
+  ]
+  expect_equal(nrow(heavy_row_subject), 1L,
+               info = "heavy_batch_reuse must appear when one batch holds >= ceiling(n*0.5) samples.")
+  expect_false(isTRUE(heavy_row_subject$severed[[1L]]),
+               info = "mode = 'subject' does not block batch leakage; row must be marked not severed.")
+
+  # Same graph, but mode = 'batch' should sever the same risk.
+  batch_c <- derive_split_constraints(graph, mode = "batch")
+  summary_batch <- summarize_leakage_risks(graph, constraint = batch_c)
+  heavy_row_batch <- summary_batch$diagnostics[
+    summary_batch$diagnostics$category == "heavy_batch_reuse", , drop = FALSE
+  ]
+  expect_true(isTRUE(heavy_row_batch$severed[[1L]]),
+              info = "mode = 'batch' groups samples by batch; heavy_batch_reuse must be marked severed.")
+
+  # Without a constraint, `severed` should be NA (no claim about severance).
+  summary_no_c <- summarize_leakage_risks(graph)
+  expect_true("severed" %in% names(summary_no_c$diagnostics))
+  heavy_row_nc <- summary_no_c$diagnostics[
+    summary_no_c$diagnostics$category == "heavy_batch_reuse", , drop = FALSE
+  ]
+  expect_true(is.na(heavy_row_nc$severed[[1L]]),
+              info = "Without a constraint, severance is not knowable; column must be NA.")
+})
+
 test_that("summarize_leakage_risks combines graph, constraint, and split-spec diagnostics", {
   graph <- make_split_spec_graph("index")
   constraint <- derive_split_constraints(graph, mode = "composite", strategy = "strict", via = c("Subject", "Batch"))
