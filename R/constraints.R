@@ -24,7 +24,7 @@
 
 .depgraph_normalize_constraint_mode <- function(mode) {
   mode <- tolower(as.character(mode)[1L])
-  .depgraph_assert(mode %in% c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "composite"), paste0("Unsupported constraint mode: ", mode))
+  .depgraph_assert(mode %in% c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "relatedness", "spatial", "composite"), paste0("Unsupported constraint mode: ", mode))
   mode
 }
 
@@ -766,6 +766,19 @@
 #'   assay assignment are retained as singleton unlinked groups and recorded in
 #'   metadata warnings.}
 #'
+#'   \item{\code{mode = "relatedness"}}{Groups samples by transitive closure
+#'   over thresholded \code{subject_related_to} edges (genetic relatedness).
+#'   Samples that share a subject, or whose subjects are directly or indirectly
+#'   related above threshold, land in the same connected-component group. Build
+#'   the edges with \code{\link{relatedness_edges_from_kinship}}. Samples with
+#'   no subject are retained as singleton groups (recorded in metadata
+#'   warnings).}
+#'
+#'   \item{\code{mode = "spatial"}}{Groups samples by transitive closure over
+#'   thresholded \code{sample_adjacent_to} edges (spatial proximity). Build the
+#'   edges with \code{\link{spatial_edges_from_coords}}. Isolated samples form
+#'   singleton groups.}
+#'
 #'   \item{\code{mode = "time"}}{Groups samples by the target of
 #'   \code{sample_collected_at_timepoint}. When \code{Timepoint} nodes have
 #'   \code{time_index} metadata, that value is used to derive
@@ -825,7 +838,7 @@
 #' constraint <- derive_split_constraints(g, mode = "subject")
 #' grouping_vector(constraint)
 #' @export
-derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
+derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "relatedness", "spatial", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- .depgraph_normalize_constraint_mode(match.arg(mode))
   strategy <- match.arg(strategy)
@@ -840,6 +853,8 @@ derive_split_constraints <- function(graph, mode = c("subject", "batch", "study"
     region = .derive_region_constraints(graph, samples = samples),
     platform = .derive_platform_constraints(graph, samples = samples),
     assay = .derive_assay_constraints(graph, samples = samples),
+    relatedness = .derive_pairwise_constraints(graph, "relatedness", samples = samples),
+    spatial = .derive_pairwise_constraints(graph, "spatial", samples = samples),
     composite = if (identical(strategy, "strict")) {
       .derive_composite_strict_constraints(graph, samples = samples, via = via)
     } else {

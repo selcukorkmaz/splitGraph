@@ -8,7 +8,7 @@
 derive_split_constraints(
   graph,
   mode = c("subject", "batch", "study", "time", "site", "region", "platform", "assay",
-    "composite"),
+    "relatedness", "spatial", "composite"),
   samples = NULL,
   strategy = c("strict", "rule_based"),
   via = NULL,
@@ -85,6 +85,19 @@ Constraint derivation rules:
   \code{sample_measured_by_assay} (the assay / modality). Samples with no
   assay assignment are retained as singleton unlinked groups and recorded in
   metadata warnings.}
+
+  \item{\code{mode = "relatedness"}}{Groups samples by transitive closure
+  over thresholded \code{subject_related_to} edges (genetic relatedness).
+  Samples that share a subject, or whose subjects are directly or indirectly
+  related above threshold, land in the same connected-component group. Build
+  the edges with \code{\link{relatedness_edges_from_kinship}}. Samples with
+  no subject are retained as singleton groups (recorded in metadata
+  warnings).}
+
+  \item{\code{mode = "spatial"}}{Groups samples by transitive closure over
+  thresholded \code{sample_adjacent_to} edges (spatial proximity). Build the
+  edges with \code{\link{spatial_edges_from_coords}}. Isolated samples form
+  singleton groups.}
 
   \item{\code{mode = "time"}}{Groups samples by the target of
   \code{sample_collected_at_timepoint}. When \code{Timepoint} nodes have

@@ -187,17 +187,21 @@
     "sample_collected_at_site",
     "sample_located_in_region",
     "sample_run_on_platform",
-    "assay_uses_platform"
+    "assay_uses_platform",
+    "subject_related_to",
+    "sample_adjacent_to"
   ),
   from_type = c(
     "Sample", "Sample", "Sample", "Sample", "Sample",
     "Sample", "Sample", "Subject", "Timepoint", "FeatureSet",
-    "FeatureSet", "Sample", "Sample", "Sample", "Assay"
+    "FeatureSet", "Sample", "Sample", "Sample", "Assay",
+    "Subject", "Sample"
   ),
   to_type = c(
     "Subject", "Batch", "Study", "Timepoint", "Assay",
     "FeatureSet", "Outcome", "Outcome", "Timepoint", "Study",
-    "Batch", "Site", "Region", "Platform", "Platform"
+    "Batch", "Site", "Region", "Platform", "Platform",
+    "Subject", "Sample"
   ),
   stringsAsFactors = FALSE
 )

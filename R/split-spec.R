@@ -64,6 +64,8 @@
   if (identical(mode, "region")) return("grouped_cv")
   if (identical(mode, "platform")) return("blocked_cv")
   if (identical(mode, "assay")) return("grouped_cv")
+  if (identical(mode, "relatedness")) return("grouped_cv")
+  if (identical(mode, "spatial")) return("grouped_cv")
   if (identical(mode, "time")) return("ordered_split")
   if (identical(mode, "composite") && identical(strategy, "strict")) return("custom_grouped_cv")
   if (identical(mode, "composite") && identical(strategy, "rule_based")) return("grouped_cv")

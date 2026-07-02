@@ -49,7 +49,10 @@ correct while still violating the intended scientific separation.
 - typed query and traversal helpers (with a safety cap on `query_paths()`)
 - projected sample-dependency detection
 - split-constraint derivation for subject, batch, study, time, site, region,
-  platform, assay, and composite modes
+  platform, assay, relatedness, spatial, and composite modes (the pairwise
+  `relatedness` / `spatial` modes group by transitive closure over thresholded
+  edges built with `relatedness_edges_from_kinship()` /
+  `spatial_edges_from_coords()`)
 - translation of constraints into a stable, tool-agnostic `split_spec`
 - split-spec preflight validation and leakage summary helpers
 - JSON serialization for `dependency_graph` and `split_spec` so handoff
@@ -181,6 +184,8 @@ vignette("adapter-cookbook", package = "splitGraph")
 - `sample_located_in_region`
 - `sample_run_on_platform`
 - `assay_uses_platform`
+- `subject_related_to`
+- `sample_adjacent_to`
 - `timepoint_precedes`
 - `featureset_generated_from_study`
 - `featureset_generated_from_batch`
@@ -233,6 +238,23 @@ rule_based_composite <- derive_split_constraints(
   g, mode = "composite", strategy = "rule_based",
   priority = c("batch", "study", "subject", "time")
 )
+```
+
+Pairwise (thresholded) relations are built from a continuous similarity signal
+and then grouped by transitive closure over the surviving edges:
+
+```r
+# Genetic relatedness: keep subject pairs with kinship >= 0.1.
+kin <- data.frame(id1 = "P1", id2 = "P2", kinship = 0.25)
+rel_edges <- relatedness_edges_from_kinship(kin, threshold = 0.1)
+
+# Spatial proximity: connect samples within a radius.
+coords <- data.frame(sample_id = c("S1", "S2", "S3"), x = c(0, 1, 9), y = c(0, 1, 9))
+adj_edges <- spatial_edges_from_coords(coords, radius = 2)
+
+# Combine with the base node/edge sets in build_dependency_graph(), then:
+relatedness_constraint <- derive_split_constraints(g, mode = "relatedness")
+spatial_constraint     <- derive_split_constraints(g, mode = "spatial")
 ```
 
 ## Serialization (JSON)

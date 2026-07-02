@@ -27,6 +27,19 @@
   (`via = c("Subject", "Platform")`), and are covered by the typed `plot()`
   layout. The `assay_uses_platform` edge (`Assay` -> `Platform`) is also part of
   the schema for manually encoding which platform an assay runs on.
+- **Pairwise (thresholded) leakage relations: `relatedness` and `spatial`
+  modes.** Some leakage sources are pairwise and continuous rather than clean
+  groups. Two new undirected, thresholded edge types model them —
+  `subject_related_to` (genetic relatedness between subjects) and
+  `sample_adjacent_to` (spatial proximity between samples) — together with the
+  edge-building helpers `relatedness_edges_from_kinship(pairs, threshold)` and
+  `spatial_edges_from_coords(coords, radius)`.
+  `derive_split_constraints(mode = "relatedness")` and `mode = "spatial"` then
+  form groups as connected components (transitive closure) over the thresholded
+  edges, so a chain of individually near neighbours still lands in one group.
+  This is a grouping that column-based approaches structurally cannot express.
+  Both modes honor the `samples=` subset (components are recomputed within the
+  subset, so an excluded bridge sample cannot leak structure across the split).
 
 # splitGraph 0.2.0
 

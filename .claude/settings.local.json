@@ -40,7 +40,8 @@
       "Bash(R -q -e 'if\\(requireNamespace\\(\"roxygen2\",quietly=TRUE\\)\\){roxygen2::roxygenise\\(\".\"\\)} else {cat\\(\"roxygen2 not installed\\\\n\"\\)}')",
       "Bash(R CMD build .)",
       "Bash(R CMD check --as-cran splitGraph_0.3.0.9000.tar.gz)",
-      "Bash(R -q -e 'roxygen2::roxygenise\\(\".\"\\)')"
+      "Bash(R -q -e 'roxygen2::roxygenise\\(\".\"\\)')",
+      "Bash(awk '/^create_edges <- function|^create_nodes <- function/{p=1} p{print} /^}/{if\\(p\\)c++; if\\(c>=1 && p\\){}}' R/constructors.R)"
     ]
   }
 }
