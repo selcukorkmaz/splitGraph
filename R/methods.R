@@ -86,6 +86,7 @@ summary.dependency_graph <- function(object, ...) {
   Region     = 1L,
   Assay      = 2L,
   FeatureSet = 2L,
+  Platform   = 2L,
   Outcome    = 3L
 )
 
@@ -101,6 +102,7 @@ summary.dependency_graph <- function(object, ...) {
     Outcome    = "#9D755D",
     Site       = "#FF9DA6",
     Region     = "#8CD17D",
+    Platform   = "#D37295",
     `_other_`  = "#B0B0B0"
   )
 }

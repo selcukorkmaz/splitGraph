@@ -15,6 +15,18 @@
   `Site`: `region_id` auto-detection, multi-region validation
   (`sample_multiple_region_assignments`), `derive_split_constraints(mode = "region")`,
   a `region_group` blocking annotation in `split_spec`, and composite/plot support.
+- **`Platform` node type and `sample_run_on_platform` edge, plus `platform`
+  and `assay` constraint modes.** Sequencing / measurement-platform structure
+  is now a first-class typed relation: `graph_from_metadata()` auto-detects a
+  `platform_id` column, `validate_graph()` flags samples run on multiple
+  platforms (`sample_multiple_platform_assignments`), and
+  `derive_split_constraints(mode = "platform")` groups samples by platform.
+  `mode = "assay"` reuses the existing `sample_measured_by_assay` relation to
+  group by assay / modality. Both carry a blocking annotation in `split_spec`
+  (`platform_group`, `assay_group`), participate in `mode = "composite"`
+  (`via = c("Subject", "Platform")`), and are covered by the typed `plot()`
+  layout. The `assay_uses_platform` edge (`Assay` -> `Platform`) is also part of
+  the schema for manually encoding which platform an assay runs on.
 
 # splitGraph 0.2.0
 

@@ -39,7 +39,8 @@
       "Bash(cd /Users/selcuk/Documents/GitHub/splitGraph; which R Rscript; R --version | head -1; echo \"---\"; ls ..; )",
       "Bash(R -q -e 'if\\(requireNamespace\\(\"roxygen2\",quietly=TRUE\\)\\){roxygen2::roxygenise\\(\".\"\\)} else {cat\\(\"roxygen2 not installed\\\\n\"\\)}')",
       "Bash(R CMD build .)",
-      "Bash(R CMD check --as-cran splitGraph_0.3.0.9000.tar.gz)"
+      "Bash(R CMD check --as-cran splitGraph_0.3.0.9000.tar.gz)",
+      "Bash(R -q -e 'roxygen2::roxygenise\\(\".\"\\)')"
     ]
   }
 }

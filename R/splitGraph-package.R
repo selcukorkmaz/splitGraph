@@ -37,7 +37,7 @@
 
 .depgraph_node_types <- c(
   "Sample", "Subject", "Batch", "Study",
-  "Timepoint", "Assay", "FeatureSet", "Outcome", "Site", "Region"
+  "Timepoint", "Assay", "FeatureSet", "Outcome", "Site", "Region", "Platform"
 )
 
 .depgraph_prefix_map <- c(
@@ -50,7 +50,8 @@
   FeatureSet = "featureset",
   Outcome = "outcome",
   Site = "site",
-  Region = "region"
+  Region = "region",
+  Platform = "platform"
 )
 
 .depgraph_node_schema <- list(
@@ -60,7 +61,7 @@
     optional_attrs = c(
       "subject_id", "batch_id", "study_id", "timepoint_id",
       "assay_id", "featureset_id", "outcome_id", "site_id", "region_id",
-      "sample_role", "collection_date", "source_file"
+      "platform_id", "sample_role", "collection_date", "source_file"
     )
   ),
   Subject = list(
@@ -130,6 +131,13 @@
     optional_attrs = c(
       "region_name", "region_type", "tissue", "organ", "coordinate_system"
     )
+  ),
+  Platform = list(
+    key_field = "platform_id",
+    required_attrs = character(),
+    optional_attrs = c(
+      "platform_name", "vendor", "model", "technology", "chemistry"
+    )
   )
 )
 
@@ -177,17 +185,19 @@
     "featureset_generated_from_study",
     "featureset_generated_from_batch",
     "sample_collected_at_site",
-    "sample_located_in_region"
+    "sample_located_in_region",
+    "sample_run_on_platform",
+    "assay_uses_platform"
   ),
   from_type = c(
     "Sample", "Sample", "Sample", "Sample", "Sample",
     "Sample", "Sample", "Subject", "Timepoint", "FeatureSet",
-    "FeatureSet", "Sample", "Sample"
+    "FeatureSet", "Sample", "Sample", "Sample", "Assay"
   ),
   to_type = c(
     "Subject", "Batch", "Study", "Timepoint", "Assay",
     "FeatureSet", "Outcome", "Outcome", "Timepoint", "Study",
-    "Batch", "Site", "Region"
+    "Batch", "Site", "Region", "Platform", "Platform"
   ),
   stringsAsFactors = FALSE
 )
@@ -235,6 +245,14 @@
     max_targets = 1L,
     missing_code = NULL,
     multiple_code = "sample_multiple_region_assignments",
+    missing_severity = NULL,
+    multiple_severity = "error"
+  ),
+  sample_run_on_platform = list(
+    min_targets = 0L,
+    max_targets = 1L,
+    missing_code = NULL,
+    multiple_code = "sample_multiple_platform_assignments",
     missing_severity = NULL,
     multiple_severity = "error"
   )

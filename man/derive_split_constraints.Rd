@@ -7,7 +7,8 @@
 \usage{
 derive_split_constraints(
   graph,
-  mode = c("subject", "batch", "study", "time", "site", "region", "composite"),
+  mode = c("subject", "batch", "study", "time", "site", "region", "platform", "assay",
+    "composite"),
   samples = NULL,
   strategy = c("strict", "rule_based"),
   via = NULL,
@@ -74,6 +75,16 @@ Constraint derivation rules:
   \code{sample_located_in_region} (e.g. a categorical tissue or anatomical
   region). Samples with no region assignment are retained as singleton
   unlinked groups and recorded in metadata warnings.}
+
+  \item{\code{mode = "platform"}}{Groups samples by the target of
+  \code{sample_run_on_platform} (the sequencing / measurement platform or
+  instrument). Samples with no platform assignment are retained as singleton
+  unlinked groups and recorded in metadata warnings.}
+
+  \item{\code{mode = "assay"}}{Groups samples by the target of
+  \code{sample_measured_by_assay} (the assay / modality). Samples with no
+  assay assignment are retained as singleton unlinked groups and recorded in
+  metadata warnings.}
 
   \item{\code{mode = "time"}}{Groups samples by the target of
   \code{sample_collected_at_timepoint}. When \code{Timepoint} nodes have

@@ -12,6 +12,8 @@
     study_group = rep(NA_character_, n),
     site_group = rep(NA_character_, n),
     region_group = rep(NA_character_, n),
+    platform_group = rep(NA_character_, n),
+    assay_group = rep(NA_character_, n),
     timepoint_id = rep(NA_character_, n),
     time_index = rep(NA_real_, n),
     order_rank = rep(NA_integer_, n),
@@ -60,6 +62,8 @@
   if (identical(mode, "study")) return("leave_one_group_out")
   if (identical(mode, "site")) return("leave_one_group_out")
   if (identical(mode, "region")) return("grouped_cv")
+  if (identical(mode, "platform")) return("blocked_cv")
+  if (identical(mode, "assay")) return("grouped_cv")
   if (identical(mode, "time")) return("ordered_split")
   if (identical(mode, "composite") && identical(strategy, "strict")) return("custom_grouped_cv")
   if (identical(mode, "composite") && identical(strategy, "rule_based")) return("grouped_cv")
@@ -93,6 +97,14 @@
   region_assignments <- .depgraph_direct_assignment(graph, "region", samples = sample_ids)
   missing_region <- is.na(sample_data$region_group) | !nzchar(sample_data$region_group)
   sample_data$region_group[missing_region] <- .split_spec_match_assignment_key(region_assignments, sample_ids)[missing_region]
+
+  platform_assignments <- .depgraph_direct_assignment(graph, "platform", samples = sample_ids)
+  missing_platform <- is.na(sample_data$platform_group) | !nzchar(sample_data$platform_group)
+  sample_data$platform_group[missing_platform] <- .split_spec_match_assignment_key(platform_assignments, sample_ids)[missing_platform]
+
+  assay_assignments <- .depgraph_direct_assignment(graph, "assay", samples = sample_ids)
+  missing_assay <- is.na(sample_data$assay_group) | !nzchar(sample_data$assay_group)
+  sample_data$assay_group[missing_assay] <- .split_spec_match_assignment_key(assay_assignments, sample_ids)[missing_assay]
 
   missing_timepoint <- is.na(sample_data$timepoint_id) | !nzchar(sample_data$timepoint_id)
   sample_data$timepoint_id[missing_timepoint] <- time_constraint$timepoint_id[missing_timepoint]
@@ -210,6 +222,12 @@ as_split_spec <- function(constraint, graph = NULL) {
   if (identical(mode, "region")) {
     sample_data$region_group <- as.character(sample_map$group_label)
   }
+  if (identical(mode, "platform")) {
+    sample_data$platform_group <- as.character(sample_map$group_label)
+  }
+  if (identical(mode, "assay")) {
+    sample_data$assay_group <- as.character(sample_map$group_label)
+  }
 
   if ("timepoint_id" %in% names(sample_map)) {
     sample_data$timepoint_id <- as.character(sample_map$timepoint_id)
@@ -239,6 +257,12 @@ as_split_spec <- function(constraint, graph = NULL) {
   }
   if (!all(is.na(sample_data$region_group))) {
     block_vars <- c(block_vars, "region_group")
+  }
+  if (!all(is.na(sample_data$platform_group))) {
+    block_vars <- c(block_vars, "platform_group")
+  }
+  if (!all(is.na(sample_data$assay_group))) {
+    block_vars <- c(block_vars, "assay_group")
   }
 
   time_var <- if (!all(is.na(sample_data$order_rank))) "order_rank" else NULL
