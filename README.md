@@ -163,6 +163,17 @@ adapters), see the **Adapter cookbook** vignette:
 vignette("adapter-cookbook", package = "splitGraph")
 ```
 
+`split_spec` is a language-neutral interchange format. A pure-Python reference
+consumer ships in `inst/python` (`splitspec`) that reads the JSON and drives
+scikit-learn `GroupKFold` / `StratifiedGroupKFold` / `TimeSeriesSplit`; a
+conformance check asserts the Python grouping matches R's `grouping_vector()`.
+The **cross-language handoff** vignette walks the full R → JSON → Python →
+scikit-learn path:
+
+```r
+vignette("cross-language-handoff", package = "splitGraph")
+```
+
 ## Core Concepts
 
 ### Node types

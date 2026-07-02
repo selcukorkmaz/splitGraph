@@ -2,6 +2,18 @@
 
 ## New features
 
+- **Python reference consumer and cross-language conformance.** A pure-Python
+  reader (`inst/python/splitspec/`) parses the `split_spec` JSON interchange
+  format and exposes the grouping, ordering, and stratum annotations needed to
+  drive scikit-learn `GroupKFold` / `StratifiedGroupKFold` / `TimeSeriesSplit`
+  (the reader itself needs only the standard library). A conformance script
+  (`inst/python/conformance.py`) and an accompanying R test assert that the
+  Python reader recovers exactly the grouping (`grouping_vector()`) and
+  `order_rank` that R emitted; the test is skipped when `python3` is absent and
+  never runs on CRAN. The new vignette `cross-language-handoff` walks the full
+  R -> JSON -> Python -> scikit-learn path, demonstrating that `split_spec` is
+  an interchange format rather than downstream plumbing.
+
 - **Formal JSON Schema and IR hardening.** The `dependency_graph` and
   `split_spec` on-disk formats now have formal JSON Schemas (Draft 2020-12)
   shipped in `inst/schema/`, and every written file references its schema via a

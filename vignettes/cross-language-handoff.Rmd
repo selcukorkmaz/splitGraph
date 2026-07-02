@@ -1,0 +1,139 @@
+---
+title: "Cross-language handoff: R to JSON to Python to scikit-learn"
+author: "Selçuk Korkmaz"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+vignette: >
+  %\VignetteIndexEntry{Cross-language handoff: R to JSON to Python to scikit-learn}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+`split_spec` is designed as an *interchange format*, not as internal plumbing
+for any one downstream package. This vignette shows the full path: derive a
+constraint in R, serialize it to JSON, read it in Python with the shipped
+`splitspec` reference consumer, and hand the recovered grouping straight to a
+scikit-learn resampler.
+
+The Python chunks below are shown but not executed when the vignette is built
+(so building needs no Python). The R chunks run.
+
+# Derive and serialize in R
+
+```{r derive}
+library(splitGraph)
+
+meta <- data.frame(
+  sample_id    = c("S1", "S2", "S3", "S4", "S5"),
+  subject_id   = c("P1", "P1", "P2", "P3", "P3"),
+  timepoint_id = c("T0", "T1", "T0", "T2", "T0"),
+  time_index   = c(0, 1, 0, 2, 0),
+  stringsAsFactors = FALSE
+)
+
+g <- graph_from_metadata(meta, graph_name = "handoff-demo")
+
+# Group so that repeated measures of the same subject never straddle a split.
+constraint <- derive_split_constraints(g, mode = "subject")
+spec <- as_split_spec(constraint, graph = g)
+
+path <- tempfile(fileext = ".json")
+write_split_spec(spec, path)
+```
+
+The written file carries a `$schema` reference and a `schema_version`, and can
+be validated against the shipped JSON Schema before it ever leaves R:
+
+```{r validate}
+report <- validate_split_spec_json(path)
+report$valid
+
+# The R-side grouping we expect Python to reproduce:
+grouping_vector(constraint)
+```
+
+# Read in Python
+
+The reference consumer lives in the installed package under `inst/python`. On
+the R side its location is:
+
+```{r pypath}
+system.file("python", package = "splitGraph")
+```
+
+Point Python at that directory (or install/copy the `splitspec` package), then:
+
+```{python read, eval=FALSE}
+import sys
+# sys.path.append(<the inst/python path printed above>)
+from splitspec import load_split_spec
+
+spec = load_split_spec("split_spec.json")
+
+spec.schema_version        # "0.2.0"
+spec.constraint_mode       # "subject"
+spec.recommended_resampling  # "grouped_cv"
+
+# Grouping keyed by sample_id — identical to R's grouping_vector():
+spec.grouping()
+# {'S1': 'subject:P1', 'S2': 'subject:P1', 'S3': 'subject:P2',
+#  'S4': 'subject:P3', 'S5': 'subject:P3'}
+
+df = spec.to_frame()       # pandas DataFrame of sample_data
+```
+
+# Drive scikit-learn
+
+The grouping vector plugs directly into `GroupKFold` (or
+`StratifiedGroupKFold`), guaranteeing that all samples from a subject land in
+the same fold:
+
+```{python sklearn, eval=FALSE}
+import numpy as np
+from sklearn.model_selection import GroupKFold
+
+groups = spec.groups()          # group_id per sample, in file order
+X = np.zeros((len(groups), 1))  # placeholder design matrix
+
+for train_idx, test_idx in GroupKFold(n_splits=3).split(X, groups=groups):
+    train_groups = {groups[i] for i in train_idx}
+    test_groups  = {groups[i] for i in test_idx}
+    assert train_groups.isdisjoint(test_groups)  # no subject leaks across
+```
+
+For an ordered evaluation (a `mode = "time"` spec), sort by `order_rank` first
+and use `TimeSeriesSplit`:
+
+```{python tss, eval=FALSE}
+from sklearn.model_selection import TimeSeriesSplit
+
+order = spec.ordered_index()    # row indices sorted by order_rank
+df_ordered = spec.to_frame().iloc[order].reset_index(drop=True)
+
+for train_idx, test_idx in TimeSeriesSplit(n_splits=3).split(df_ordered):
+    ...
+```
+
+# Why this matters
+
+Because the grouping is decided in R (from explicit, validated dependency
+structure) and merely *reproduced* in Python, the leakage-aware partition is
+identical across languages. `split_spec` is the contract; scikit-learn —
+like `rsample` on the R side — is just one consumer of it. The package ships a
+conformance check (`inst/python/conformance.py`) that asserts the Python reader
+recovers exactly the grouping and `order_rank` that R emitted.
