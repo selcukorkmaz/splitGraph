@@ -1,5 +1,10 @@
 # splitGraph: Dataset Dependency Graphs for Leakage-Aware Evaluation
 
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/selcukorkmaz/splitGraph/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/selcukorkmaz/splitGraph/actions/workflows/R-CMD-check.yaml)
+[![Codecov test coverage](https://codecov.io/gh/selcukorkmaz/splitGraph/branch/main/graph/badge.svg)](https://app.codecov.io/gh/selcukorkmaz/splitGraph?branch=main)
+<!-- badges: end -->
+
 `splitGraph` is an R package for representing biomedical dataset structure as a
 typed dependency graph so that leakage-relevant relationships can be made
 explicit, validated, queried, and converted into deterministic split
@@ -70,6 +75,29 @@ correct while still violating the intended scientific separation.
 
 The package is intentionally narrow: dataset dependency structure for
 leakage-aware evaluation design.
+
+## Scope & Relationship to bioLeak
+
+splitGraph sits one layer *above* execution. It represents dependency
+structure, validates it, and emits a neutral `split_spec` — and stops there.
+It has **zero** resampling or modeling dependencies and no runtime dependency
+on any downstream package.
+
+| splitGraph owns | Downstream consumer owns |
+|---|---|
+| Typed dependency graph + validation | Generating resamples / folds |
+| Deriving split **constraints** | Stratified splitting, purge/embargo execution |
+| Emitting + validating the `split_spec` IR | Model fitting, tuning, performance auditing |
+| Carrying stratum / ordering / blocking annotations | Statistical leakage evidence (ΔLSI, permutation gaps) |
+
+The reference consumer is [**bioLeak**](https://github.com/selcukorkmaz/bioLeak):
+`bioLeak::as_leaksplits(spec, data, outcome)` turns a splitGraph `split_spec`
+into an executable, leakage-audited split plan. Because `split_spec` is a
+documented, tool-agnostic contract (with a formal JSON Schema and a Python
+reference consumer), other tools — an `rsample` adapter, the shipped Python
+reader driving scikit-learn — can consume it equally. A contract test
+(`Suggests: bioLeak`, skipped if absent) pins this seam so neither side breaks
+it silently.
 
 ## Installation
 

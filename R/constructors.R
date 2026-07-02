@@ -18,8 +18,6 @@
 #'   dependency constraint.
 #' @param sample_map Sample-level mapping table for constraints.
 #' @param strategy Split strategy identifier.
-#' @param issue_type,severity,affected_samples,evidence,recommendation Fields
-#'   describing a leakage warning.
 #' @return An S3 object corresponding to the constructor that was called.
 #' @examples
 #' meta <- data.frame(
@@ -185,22 +183,6 @@ split_constraint <- function(strategy, sample_map, recommended_downstream_args =
       metadata = metadata
     ),
     class = "split_constraint"
-  )
-}
-
-#' @rdname graph_node_set
-#' @export
-leakage_constraint <- function(issue_type, severity, affected_samples, evidence = NULL, recommendation = "", metadata = list()) {
-  structure(
-    list(
-      issue_type = as.character(issue_type)[1L],
-      severity = as.character(severity)[1L],
-      affected_samples = as.character(affected_samples),
-      evidence = if (is.null(evidence)) data.frame(stringsAsFactors = FALSE) else evidence,
-      recommendation = as.character(recommendation)[1L],
-      metadata = metadata
-    ),
-    class = "leakage_constraint"
   )
 }
 

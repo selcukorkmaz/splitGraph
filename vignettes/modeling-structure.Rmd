@@ -1,0 +1,139 @@
+---
+title: "Modeling site, platform, relatedness, and spatial structure"
+author: "Selçuk Korkmaz"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+vignette: >
+  %\VignetteIndexEntry{Modeling site, platform, relatedness, and spatial structure}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+library(splitGraph)
+```
+
+Beyond the classic subject / batch / study / time relations, `splitGraph`
+models four further sources of leakage: multi-**site** studies, sequencing /
+measurement **platform**, and two genuinely *pairwise* relations — genetic
+**relatedness** and **spatial** proximity. This vignette shows how to build and
+group by each.
+
+# Cluster-style relations: site, platform, assay
+
+`graph_from_metadata()` auto-detects `site_id`, `platform_id`, and `assay_id`
+columns and builds the corresponding typed nodes and edges. Each then has its
+own constraint mode.
+
+```{r cluster}
+meta <- data.frame(
+  sample_id   = paste0("S", 1:6),
+  subject_id  = c("P1", "P1", "P2", "P2", "P3", "P3"),
+  site_id     = c("NYC", "NYC", "BOS", "BOS", "NYC", "BOS"),
+  platform_id = c("illumina", "illumina", "nanopore", "nanopore", "illumina", "nanopore"),
+  assay_id    = c("rnaseq", "rnaseq", "rnaseq", "wgs", "wgs", "wgs"),
+  stringsAsFactors = FALSE
+)
+
+g <- graph_from_metadata(meta, graph_name = "structure-demo")
+
+grouping_vector(derive_split_constraints(g, mode = "site"))
+grouping_vector(derive_split_constraints(g, mode = "platform"))
+grouping_vector(derive_split_constraints(g, mode = "assay"))
+```
+
+Each of these annotations is also carried into `split_spec` as a blocking
+variable, and any of them can participate in a composite derivation:
+
+```{r composite}
+constraint <- derive_split_constraints(
+  g, mode = "composite", strategy = "strict",
+  via = c("Subject", "Site", "Platform")
+)
+grouping_vector(constraint)
+```
+
+# Pairwise relation: genetic relatedness
+
+Some leakage is pairwise and continuous rather than a clean grouping. Genetic
+relatedness is the canonical example: a kinship coefficient links *pairs* of
+subjects. `relatedness_edges_from_kinship()` keeps pairs at or above a threshold
+and emits `subject_related_to` edges; `mode = "relatedness"` then groups by
+transitive closure over those edges (so a chain of related individuals lands in
+one group).
+
+```{r relatedness}
+# P1-P2 and P2-P3 are related above threshold; P4 is unrelated.
+kin <- data.frame(
+  id1 = c("P1", "P2", "P1"),
+  id2 = c("P2", "P3", "P4"),
+  kinship = c(0.25, 0.20, 0.02),
+  stringsAsFactors = FALSE
+)
+rel_edges <- relatedness_edges_from_kinship(kin, threshold = 0.1)
+
+meta_r <- data.frame(
+  sample_id  = paste0("S", 1:4),
+  subject_id = c("P1", "P2", "P3", "P4"),
+  stringsAsFactors = FALSE
+)
+samples  <- create_nodes(meta_r, "Sample", "sample_id")
+subjects <- create_nodes(meta_r, "Subject", "subject_id")
+belongs  <- create_edges(meta_r, "sample_id", "subject_id",
+                         "Sample", "Subject", "sample_belongs_to_subject")
+
+g_rel <- build_dependency_graph(list(samples, subjects), list(belongs, rel_edges))
+
+# S1, S2, S3 (P1-P2-P3 related) group together; S4 (P4) is separate.
+grouping_vector(derive_split_constraints(g_rel, mode = "relatedness"))
+```
+
+# Pairwise relation: spatial proximity
+
+Spatial proximity works the same way over sample coordinates.
+`spatial_edges_from_coords()` connects samples within a radius (Euclidean
+distance over the coordinate columns), and `mode = "spatial"` groups the
+resulting connected components.
+
+```{r spatial}
+coords <- data.frame(
+  sample_id = paste0("S", 1:4),
+  x = c(0, 1, 2, 40),
+  y = c(0, 0, 0, 40),
+  stringsAsFactors = FALSE
+)
+adj_edges <- spatial_edges_from_coords(coords, radius = 1.5)
+
+meta_s <- data.frame(
+  sample_id  = paste0("S", 1:4),
+  subject_id = paste0("P", 1:4),
+  stringsAsFactors = FALSE
+)
+samples_s  <- create_nodes(meta_s, "Sample", "sample_id")
+subjects_s <- create_nodes(meta_s, "Subject", "subject_id")
+belongs_s  <- create_edges(meta_s, "sample_id", "subject_id",
+                           "Sample", "Subject", "sample_belongs_to_subject")
+
+g_sp <- build_dependency_graph(list(samples_s, subjects_s), list(belongs_s, adj_edges))
+
+# S1-S2-S3 form a proximity chain; S4 is isolated.
+grouping_vector(derive_split_constraints(g_sp, mode = "spatial"))
+```
+
+Because the thresholds are applied up front in the edge-building helpers, they
+are *derivation inputs*, not modeling choices: `splitGraph` forms groups over
+whatever edges survive, and never computes folds itself. The resulting
+`split_spec` is handed to a downstream consumer for execution, exactly as with
+every other mode.

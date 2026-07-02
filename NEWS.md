@@ -1,37 +1,17 @@
-# splitGraph 0.3.0.9000 (development)
+# splitGraph 0.3.0
+
+This release broadens the vocabulary of leakage relations splitGraph can model,
+hardens the `split_spec` interchange format into a formally specified contract,
+and demonstrates that contract across a language boundary. splitGraph continues
+to stop at the constraint / `split_spec` boundary: generating folds, fitting
+models, applying purge/embargo, and producing statistical leakage evidence
+remain the responsibility of downstream consumers such as **bioLeak**.
 
 ## New features
 
-- **Python reference consumer and cross-language conformance.** A pure-Python
-  reader (`inst/python/splitspec/`) parses the `split_spec` JSON interchange
-  format and exposes the grouping, ordering, and stratum annotations needed to
-  drive scikit-learn `GroupKFold` / `StratifiedGroupKFold` / `TimeSeriesSplit`
-  (the reader itself needs only the standard library). A conformance script
-  (`inst/python/conformance.py`) and an accompanying R test assert that the
-  Python reader recovers exactly the grouping (`grouping_vector()`) and
-  `order_rank` that R emitted; the test is skipped when `python3` is absent and
-  never runs on CRAN. The new vignette `cross-language-handoff` walks the full
-  R -> JSON -> Python -> scikit-learn path, demonstrating that `split_spec` is
-  an interchange format rather than downstream plumbing.
+### New leakage relations
 
-- **Formal JSON Schema and IR hardening.** The `dependency_graph` and
-  `split_spec` on-disk formats now have formal JSON Schemas (Draft 2020-12)
-  shipped in `inst/schema/`, and every written file references its schema via a
-  `$schema` key. New validators `validate_graph_json()` and
-  `validate_split_spec_json()` check a handoff file against the contract
-  (required fields, value types, node/edge-type enumerations, and referential
-  integrity of edge endpoints) with no extra dependency. `split_spec` metadata
-  now records derivation provenance (`splitgraph_version`, `derived_at`)
-  alongside the existing `source_mode` / `source_strategy` / `relations_used`.
-- **Schema-version policy and one-shot upgrader.** `schema_version` is bumped
-  to `"0.2.0"` and the compatibility rule is now explicit: the major version is
-  the compatibility boundary, so files sharing the installed major (including
-  all `"0.1.0"` files) load silently, while a differing major loads with a
-  warning. `migrate_dependency_graph_json()` and `migrate_split_spec_json()`
-  upgrade an older file in place, filling fields introduced since it was
-  written and stamping the current version and `$schema`.
-
-- **`Site` node type and `sample_collected_at_site` edge.** Multi-site / 
+- **`Site` node type and `sample_collected_at_site` edge.** Multi-site /
   multi-center structure is now a first-class typed relation.
   `graph_from_metadata()` auto-detects a `site_id` column; `validate_graph()`
   flags samples assigned to multiple sites (`sample_multiple_site_assignments`);
@@ -42,11 +22,12 @@
 - **`Region` node type and `sample_located_in_region` edge.** Categorical tissue
   / anatomical region structure is now a first-class typed relation, mirroring
   `Site`: `region_id` auto-detection, multi-region validation
-  (`sample_multiple_region_assignments`), `derive_split_constraints(mode = "region")`,
-  a `region_group` blocking annotation in `split_spec`, and composite/plot support.
-- **`Platform` node type and `sample_run_on_platform` edge, plus `platform`
-  and `assay` constraint modes.** Sequencing / measurement-platform structure
-  is now a first-class typed relation: `graph_from_metadata()` auto-detects a
+  (`sample_multiple_region_assignments`),
+  `derive_split_constraints(mode = "region")`, a `region_group` blocking
+  annotation in `split_spec`, and composite / plot support.
+- **`Platform` node type and `sample_run_on_platform` edge, plus `platform` and
+  `assay` constraint modes.** Sequencing / measurement-platform structure is now
+  a first-class typed relation: `graph_from_metadata()` auto-detects a
   `platform_id` column, `validate_graph()` flags samples run on multiple
   platforms (`sample_multiple_platform_assignments`), and
   `derive_split_constraints(mode = "platform")` groups samples by platform.
@@ -63,12 +44,91 @@
   `sample_adjacent_to` (spatial proximity between samples) — together with the
   edge-building helpers `relatedness_edges_from_kinship(pairs, threshold)` and
   `spatial_edges_from_coords(coords, radius)`.
-  `derive_split_constraints(mode = "relatedness")` and `mode = "spatial"` then
-  form groups as connected components (transitive closure) over the thresholded
-  edges, so a chain of individually near neighbours still lands in one group.
-  This is a grouping that column-based approaches structurally cannot express.
-  Both modes honor the `samples=` subset (components are recomputed within the
-  subset, so an excluded bridge sample cannot leak structure across the split).
+  `derive_split_constraints(mode = "relatedness")` and `mode = "spatial"` form
+  groups as connected components (transitive closure) over the thresholded
+  edges, so a chain of individually near neighbours still lands in one group —
+  a grouping that column-based approaches structurally cannot express. Both
+  modes honor the `samples=` subset (components are recomputed within the subset,
+  so an excluded bridge sample cannot leak structure across the split).
+
+### Interchange-format hardening
+
+- **Formal JSON Schema.** The `dependency_graph` and `split_spec` on-disk formats
+  now have formal JSON Schemas (Draft 2020-12) shipped in `inst/schema/`, and
+  every written file references its schema via a `$schema` key.
+- **JSON validators.** `validate_graph_json()` and `validate_split_spec_json()`
+  check a handoff file against the contract — required fields, value types,
+  node/edge-type enumerations, and referential integrity of edge endpoints —
+  with no dependency beyond `jsonlite`.
+- **Schema-version policy and one-shot upgraders.** `schema_version` is now
+  `"0.2.0"`, and the compatibility rule is explicit and enforced: the major
+  version is the compatibility boundary, so files sharing the installed major
+  (including all `"0.1.0"` files) load silently, while a differing major loads
+  with a warning. `migrate_dependency_graph_json()` and
+  `migrate_split_spec_json()` upgrade an older file in place, filling fields
+  introduced since it was written and stamping the current version and `$schema`.
+- **Provenance.** `split_spec` metadata now records derivation provenance
+  (`splitgraph_version`, `derived_at`) alongside the existing `source_mode` /
+  `source_strategy` / `relations_used`.
+
+### Cross-language interoperability
+
+- **Python reference consumer.** A pure-Python reader (`inst/python/splitspec/`)
+  parses the `split_spec` JSON and exposes the grouping, ordering, and stratum
+  annotations needed to drive scikit-learn `GroupKFold` /
+  `StratifiedGroupKFold` / `TimeSeriesSplit` (the reader itself needs only the
+  standard library). A conformance script (`inst/python/conformance.py`) and an
+  accompanying R test assert that the Python reader recovers exactly the grouping
+  (`grouping_vector()`) and `order_rank` that R emitted; the test is skipped when
+  `python3` is absent and never runs on CRAN.
+
+## Bug fixes
+
+- **Composite-strict subset scoping.** `derive_split_constraints(mode =
+  "composite", strategy = "strict", samples = ...)` now recomputes connected
+  components *within* the requested subset. Previously two in-subset samples
+  connected only through an out-of-subset sample could inherit a shared group,
+  silently leaking excluded structure into the split.
+- **Mode-aware leakage summaries.** `summarize_leakage_risks()` now reports a
+  `severed` column indicating whether the chosen constraint mode structurally
+  eliminates each leakage path (`TRUE`/`FALSE`), or `NA` when no constraint is
+  supplied. Previously the same risk report was returned regardless of the mode.
+- **`query_paths()` truncation is now visible.** When the search hits the finite
+  `max_length` cap, the result metadata carries a `truncated = TRUE` flag so
+  suppressed longer paths are no longer silent.
+- **Timestamp round-trips.** A missing or unparseable `created_at` now round-trips
+  as `NA` (POSIXct) instead of falling back to the current time.
+- **`split_spec` JSON round-trip fidelity.** The new `site_group` / `region_group`
+  / `platform_group` / `assay_group` columns are written and read back correctly;
+  earlier development builds dropped them on serialization.
+
+## Breaking changes
+
+- **Removed the unused `leakage_constraint()` constructor** and its
+  `print` / `summary` / `as.data.frame` methods. The object was exported but
+  never produced or consumed anywhere in the package; `leakage_risk_summary()`
+  (produced by `summarize_leakage_risks()`) is the supported leakage-reporting
+  type and is unaffected.
+- The data-model `schema_version` moved from `"0.1.0"` to `"0.2.0"`. This is
+  backward compatible — existing `"0.1.0"` files load without warning — but the
+  stamped version in newly written files changes.
+
+## Documentation and infrastructure
+
+- New vignette **`cross-language-handoff`**: the full R -> JSON -> Python ->
+  scikit-learn path, showing `split_spec` as an interchange format rather than
+  downstream plumbing.
+- New vignette **`modeling-structure`**: modeling site, platform, assay,
+  relatedness, and spatial structure end to end.
+- The README gains a **"Scope & Relationship to bioLeak"** section, and the
+  `?splitGraph` package doc now states scope and non-goals explicitly.
+- A **contract test** (`Suggests: bioLeak`, skipped if absent) pins the seam to
+  the reference consumer, asserting that a splitGraph `split_spec` satisfies
+  `bioLeak::as_leaksplits()`.
+- The package ships GitHub Actions workflows (multi-OS `R-CMD-check`,
+  `test-coverage`) and a JOSS `paper.md` framed on the representation and
+  interchange-format contribution.
+- `stats` and `utils` are now declared in `Imports` (both were already used).
 
 # splitGraph 0.2.0
 

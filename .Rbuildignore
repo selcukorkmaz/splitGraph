@@ -7,3 +7,7 @@
 ^splitGraph\.Rcheck$
 ^splitGraph_.*\.tar\.gz$
 ^ROADMAP.*\.md$
+^\.github$
+^paper\.md$
+^paper\.bib$
+^codecov\.yml$

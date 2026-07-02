@@ -296,28 +296,6 @@ as.data.frame.split_constraint <- function(x, row.names = NULL, optional = FALSE
 }
 
 #' @export
-print.leakage_constraint <- function(x, ...) {
-  cat("<leakage_constraint>", x$issue_type, "(", x$severity, ")\n")
-  cat("  Affected samples:", length(x$affected_samples), "\n")
-  invisible(x)
-}
-
-#' @export
-summary.leakage_constraint <- function(object, ...) {
-  list(
-    issue_type = object$issue_type,
-    severity = object$severity,
-    n_affected_samples = length(object$affected_samples),
-    recommendation = object$recommendation
-  )
-}
-
-#' @export
-as.data.frame.leakage_constraint <- function(x, row.names = NULL, optional = FALSE, ...) {
-  x$evidence
-}
-
-#' @export
 print.depgraph_validation_report <- function(x, ...) {
   cat("<depgraph_validation_report>")
   if (!is.null(x$graph_name) && nzchar(x$graph_name)) {

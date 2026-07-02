@@ -8,14 +8,34 @@
 \description{
 The \pkg{splitGraph} package provides typed graph objects for representing
 dataset structure, sample provenance, and leakage-relevant dependencies in
-biomedical evaluation workflows.
+biomedical evaluation workflows. It makes dataset dependency structure
+explicit enough to validate, query, and convert into a stable, tool-agnostic
+split specification (\code{split_spec}) for leakage-aware evaluation.
 }
-\details{
-Version 1 is focused on dataset dependency graphs rather than biological
-interaction networks. It focuses on making dataset dependency structure
-explicit enough to validate, query, and convert into stable split
-specifications for leakage-aware evaluation.
+\section{Scope (what splitGraph does)}{
+
+\itemize{
+  \item Model dataset dependency structure as a typed graph.
+  \item Validate that structure (structural, semantic, leakage-relevant).
+  \item Derive deterministic split \emph{constraints} from the structure.
+  \item Emit and validate the tool-agnostic \code{split_spec} interchange
+    format (with a formal JSON Schema and a Python reference consumer).
 }
+}
+
+\section{Non-goals (what downstream consumers own)}{
+
+splitGraph deliberately stops at the constraint / \code{split_spec} boundary.
+It does \emph{not} generate resamples or folds, perform stratified splitting,
+apply purge/embargo, fit or tune models, or produce statistical leakage
+evidence. Those belong to downstream consumers. The reference consumer is
+\pkg{bioLeak}, whose \code{as_leaksplits()} turns a \code{split_spec} into an
+executable split plan; \code{split_spec} is neutral, so other tools (an
+\pkg{rsample} adapter, the shipped Python reader, etc.) can consume it
+equally. See the \code{split_spec} contract in \code{?as_split_spec} and the
+"Scope & relationship to bioLeak" section of the README.
+}
+
 \seealso{
 Useful links:
 \itemize{

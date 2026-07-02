@@ -10,7 +10,6 @@
 \alias{graph_query_result}
 \alias{dependency_constraint}
 \alias{split_constraint}
-\alias{leakage_constraint}
 \title{Construct Core splitGraph S3 Objects}
 \usage{
 graph_node_set(
@@ -64,15 +63,6 @@ split_constraint(
   recommended_downstream_args = list(),
   metadata = list()
 )
-
-leakage_constraint(
-  issue_type,
-  severity,
-  affected_samples,
-  evidence = NULL,
-  recommendation = "",
-  metadata = list()
-)
 }
 \arguments{
 \item{data}{A data frame matching the canonical schema for nodes or edges.}
@@ -98,9 +88,6 @@ dependency constraint.}
 \item{sample_map}{Sample-level mapping table for constraints.}
 
 \item{strategy}{Split strategy identifier.}
-
-\item{issue_type, severity, affected_samples, evidence, recommendation}{Fields
-describing a leakage warning.}
 }
 \value{
 An S3 object corresponding to the constructor that was called.
