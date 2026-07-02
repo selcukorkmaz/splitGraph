@@ -41,13 +41,14 @@ read JSON can interpret the format).
 
 \preformatted{
 {
+  "$schema": "https://.../inst/schema/dependency_graph.schema.json",
   "splitGraph_object": "dependency_graph",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "metadata": {
     "graph_name": "...",
     "dataset_name": "...",
     "created_at": "2026-04-29T10:11:12.000000+0000",
-    "schema_version": "0.1.0",
+    "schema_version": "0.2.0",
     "validation_overrides": { ... }
   },
   "nodes": [
@@ -63,8 +64,12 @@ read JSON can interpret the format).
   ]
 }
 }
-Reading a file whose \code{schema_version} does not match the installed
-package emits a warning but still loads.
+Reading a file whose \code{schema_version} shares the installed major
+version loads silently (additive-only differences); a differing major
+version loads with a warning suggesting \code{migrate_dependency_graph_json()}.
+The written JSON also carries a \code{$schema} reference to the formal JSON
+Schema shipped in \code{inst/schema/}; validate a file against it with
+\code{validate_graph_json()}.
 }
 
 \examples{

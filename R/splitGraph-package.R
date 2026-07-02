@@ -23,17 +23,24 @@
 # objects. A package release that only adds functions or fixes bugs must NOT
 # bump this string.
 #
-# Additive, backward-compatible changes do NOT bump this version. Adding new
-# node/edge types or new optional `sample_data` columns is safe because
-# readers tolerate their absence: `read_dependency_graph()` /
-# `read_split_spec()` fill any column missing from an older file with `NA`,
-# and older files therefore round-trip cleanly under a newer package. On this
-# rule, the 0.3.0 additions (the `Site` / `Region` node and edge types and the
-# `site_group` / `region_group` split_spec columns) are additive and keep
-# schema_version at "0.1.0". Only a change that would make an older file
-# unreadable (renaming/removing a column, changing a key's type or meaning)
-# warrants a bump, coordinated with a formal JSON Schema and a migration path.
-.depgraph_schema_version <- "0.1.0"
+# Compatibility policy (enforced by `.depgraph_check_schema_version()`): the
+# MAJOR component is the compatibility boundary. Files whose recorded version
+# shares the installed MAJOR are read-compatible and load silently, because
+# readers tolerate additive change -- `read_dependency_graph()` /
+# `read_split_spec()` fill any field missing from an older file with `NA` and
+# ignore fields they do not recognise. A differing MAJOR (older or newer) loads
+# with a warning suggesting `migrate_dependency_graph_json()` /
+# `migrate_split_spec_json()`. Only a change that would make an older file
+# genuinely unreadable (renaming/removing a field, changing a field's type or
+# meaning) warrants a MAJOR bump.
+#
+# History: "0.1.0" was the initial format. "0.2.0" formalises the on-disk
+# contract with shipped JSON Schemas (`inst/schema/`), a `$schema` reference in
+# output, split_spec provenance (`splitgraph_version`, `derived_at`), and the
+# node/edge/column additions from the 0.3.0 development cycle (Site, Region,
+# Platform, the pairwise relations, and their split_spec annotations). All of
+# those are additive within MAJOR 0, so "0.1.0" files still load silently.
+.depgraph_schema_version <- "0.2.0"
 
 .depgraph_node_types <- c(
   "Sample", "Subject", "Batch", "Study",
@@ -292,6 +299,12 @@
   if (!isTRUE(condition)) {
     stop(message, call. = FALSE)
   }
+}
+
+# Installed splitGraph package version as a string, for stamping provenance.
+# Returns NA_character_ if the version cannot be resolved (e.g. exotic loads).
+.depgraph_package_version <- function() {
+  tryCatch(as.character(utils::packageVersion("splitGraph")), error = function(e) NA_character_)
 }
 
 .depgraph_match_node_type <- function(type) {

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/split_spec.schema.json",
+  "title": "splitGraph split_spec",
+  "description": "On-disk JSON format written by splitGraph::write_split_spec(). A tool-agnostic, sample-level split specification for leakage-aware evaluation.",
+  "type": "object",
+  "required": ["splitGraph_object", "schema_version", "group_var", "sample_data"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "splitGraph_object": { "const": "split_spec" },
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "group_var": { "type": "string" },
+    "block_vars": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "time_var": { "type": ["string", "null"] },
+    "ordering_required": { "type": "boolean" },
+    "constraint_mode": { "type": ["string", "null"] },
+    "constraint_strategy": { "type": ["string", "null"] },
+    "recommended_resampling": { "type": ["string", "null"] },
+    "metadata": {
+      "type": "object",
+      "description": "Derivation provenance: source_mode, source_strategy, relations_used, splitgraph_version, derived_at, n_samples, n_groups, warnings.",
+      "properties": {
+        "source_mode": { "type": ["string", "null"] },
+        "source_strategy": { "type": ["string", "null"] },
+        "relations_used": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "splitgraph_version": { "type": ["string", "null"] },
+        "derived_at": { "type": ["string", "null"] }
+      }
+    },
+    "sample_data": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sample_row" }
+    }
+  },
+  "$defs": {
+    "sample_row": {
+      "type": "object",
+      "required": ["sample_id", "group_id"],
+      "properties": {
+        "sample_id": { "type": "string" },
+        "sample_node_id": { "type": ["string", "null"] },
+        "group_id": { "type": "string" },
+        "primary_group": { "type": ["string", "null"] },
+        "batch_group": { "type": ["string", "null"] },
+        "study_group": { "type": ["string", "null"] },
+        "site_group": { "type": ["string", "null"] },
+        "region_group": { "type": ["string", "null"] },
+        "platform_group": { "type": ["string", "null"] },
+        "assay_group": { "type": ["string", "null"] },
+        "timepoint_id": { "type": ["string", "null"] },
+        "time_index": { "type": ["number", "null"] },
+        "order_rank": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

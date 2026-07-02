@@ -2,6 +2,23 @@
 
 ## New features
 
+- **Formal JSON Schema and IR hardening.** The `dependency_graph` and
+  `split_spec` on-disk formats now have formal JSON Schemas (Draft 2020-12)
+  shipped in `inst/schema/`, and every written file references its schema via a
+  `$schema` key. New validators `validate_graph_json()` and
+  `validate_split_spec_json()` check a handoff file against the contract
+  (required fields, value types, node/edge-type enumerations, and referential
+  integrity of edge endpoints) with no extra dependency. `split_spec` metadata
+  now records derivation provenance (`splitgraph_version`, `derived_at`)
+  alongside the existing `source_mode` / `source_strategy` / `relations_used`.
+- **Schema-version policy and one-shot upgrader.** `schema_version` is bumped
+  to `"0.2.0"` and the compatibility rule is now explicit: the major version is
+  the compatibility boundary, so files sharing the installed major (including
+  all `"0.1.0"` files) load silently, while a differing major loads with a
+  warning. `migrate_dependency_graph_json()` and `migrate_split_spec_json()`
+  upgrade an older file in place, filling fields introduced since it was
+  written and stamping the current version and `$schema`.
+
 - **`Site` node type and `sample_collected_at_site` edge.** Multi-site / 
   multi-center structure is now a first-class typed relation.
   `graph_from_metadata()` auto-detects a `site_id` column; `validate_graph()`

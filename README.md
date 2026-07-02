@@ -274,11 +274,16 @@ g2    <- read_dependency_graph(graph_path)
 spec2 <- read_split_spec(spec_path)
 ```
 
-The JSON schema is documented under `?write_dependency_graph` and
-`?write_split_spec`. Each file carries a `schema_version` field; reading a
-file written under a different schema version emits a warning but still
-loads. `NA` values in `sample_data` round-trip as JSON `null`. The
-`jsonlite` package (a `Suggests` dep) must be installed.
+Both formats have a formal JSON Schema (Draft 2020-12) shipped in
+`inst/schema/`, and every written file references it via a `$schema` key.
+Validate a handoff file against the contract with `validate_graph_json()` /
+`validate_split_spec_json()`. Each file also carries a `schema_version`; the
+**major** version is the compatibility boundary, so files sharing the
+installed major load silently while a differing major warns.
+`migrate_dependency_graph_json()` / `migrate_split_spec_json()` upgrade an
+older file to the current version in place. `NA` values in `sample_data`
+round-trip as JSON `null`. The `jsonlite` package (a `Suggests` dep) must be
+installed.
 
 ## Plot Method
 

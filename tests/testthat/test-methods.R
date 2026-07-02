@@ -14,9 +14,9 @@ test_that("summary and print methods expose stable metadata", {
   edge_summary <- summary(edges)
   graph_summary <- summary(graph)
 
-  expect_equal(sample_summary$schema_version, "0.1.0")
-  expect_equal(edge_summary$schema_version, "0.1.0")
-  expect_equal(graph_summary$schema_version, "0.1.0")
+  expect_equal(sample_summary$schema_version, splitGraph:::.depgraph_schema_version)
+  expect_equal(edge_summary$schema_version, splitGraph:::.depgraph_schema_version)
+  expect_equal(graph_summary$schema_version, splitGraph:::.depgraph_schema_version)
   expect_equal(graph_summary$graph_name, "demo")
   expect_true(length(capture.output(print(graph))) > 0L)
   expect_true(length(capture.output(print(samples))) > 0L)

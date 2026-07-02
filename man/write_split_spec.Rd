@@ -37,8 +37,9 @@ read back as \code{NA}.
 
 \preformatted{
 {
+  "$schema": "https://.../inst/schema/split_spec.schema.json",
   "splitGraph_object": "split_spec",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "group_var": "group_id",
   "block_vars": ["batch_group", "study_group"],
   "time_var": "order_rank",

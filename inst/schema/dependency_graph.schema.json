@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/dependency_graph.schema.json",
+  "title": "splitGraph dependency_graph",
+  "description": "On-disk JSON format written by splitGraph::write_dependency_graph(). A typed dependency graph describing biomedical dataset structure.",
+  "type": "object",
+  "required": ["splitGraph_object", "schema_version", "nodes", "edges"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "splitGraph_object": { "const": "dependency_graph" },
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "graph_name": { "type": ["string", "null"] },
+        "dataset_name": { "type": ["string", "null"] },
+        "created_at": { "type": ["string", "null"] },
+        "schema_version": { "type": "string" },
+        "validation_overrides": { "type": "object" }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["node_id", "node_type", "node_key"],
+      "properties": {
+        "node_id": { "type": "string" },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "Sample", "Subject", "Batch", "Study", "Timepoint",
+            "Assay", "FeatureSet", "Outcome", "Site", "Region", "Platform"
+          ]
+        },
+        "node_key": { "type": "string" },
+        "label": { "type": ["string", "null"] },
+        "attrs": { "type": "object" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["edge_id", "from", "to", "edge_type"],
+      "properties": {
+        "edge_id": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "edge_type": {
+          "type": "string",
+          "enum": [
+            "sample_belongs_to_subject", "sample_processed_in_batch",
+            "sample_from_study", "sample_collected_at_timepoint",
+            "sample_measured_by_assay", "sample_uses_featureset",
+            "sample_has_outcome", "subject_has_outcome", "timepoint_precedes",
+            "featureset_generated_from_study", "featureset_generated_from_batch",
+            "sample_collected_at_site", "sample_located_in_region",
+            "sample_run_on_platform", "assay_uses_platform",
+            "subject_related_to", "sample_adjacent_to"
+          ]
+        },
+        "attrs": { "type": "object" }
+      }
+    }
+  }
+}

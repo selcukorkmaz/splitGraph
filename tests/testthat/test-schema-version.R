@@ -2,7 +2,7 @@ test_that("schema_version is stable and independent of package version", {
   # The data-model schema version must NOT change automatically when the
   # package version is bumped. Only an explicit, documented schema change
   # should bump it. This test locks the contract.
-  expect_identical(splitGraph:::.depgraph_schema_version, "0.1.0")
+  expect_identical(splitGraph:::.depgraph_schema_version, "0.2.0")
 
   pkg_version <- as.character(utils::packageVersion("splitGraph"))
   expect_type(pkg_version, "character")
