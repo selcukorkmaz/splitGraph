@@ -498,8 +498,8 @@ not just which metadata columns happen to match.
 
 ## Derive split constraints from the graph
 
-`splitGraph` can derive direct constraints for subject, batch, study, and time
-as well as composite constraints that combine multiple dependency sources.
+`splitGraph` can derive direct constraints for subject, batch, study, time, and
+site as well as composite constraints that combine multiple dependency sources.
 
 ```{r constraints}
 subject_constraint <- derive_split_constraints(graph, mode = "subject")
@@ -586,6 +586,63 @@ The strict composite constraint uses transitive closure: `S1`, `S2`, `S3`, and
 one dependency component. The rule-based composite constraint is different: it
 uses the highest-priority available dependency per sample, so `S5` falls back
 to study-level grouping instead of becoming a composite component.
+
+## Multi-site (center) structure
+
+In multi-site studies, the collection site is a common leakage axis: a model can
+"recognize" a site rather than generalize across sites. `splitGraph` models the
+site as a first-class `Site` node connected by `sample_collected_at_site` edges.
+`graph_from_metadata()` auto-detects a `site_id` column, so no extra wiring is
+needed.
+
+```{r site-structure}
+site_meta <- data.frame(
+  sample_id  = c("S1", "S2", "S3", "S4", "S5", "S6"),
+  subject_id = c("P1", "P1", "P2", "P2", "P3", "P3"),
+  site_id    = c("NYC", "NYC", "BOS", "BOS", "NYC", "BOS"),
+  stringsAsFactors = FALSE
+)
+
+site_graph <- graph_from_metadata(site_meta, graph_name = "multi-site")
+
+# Group samples so that no collection site straddles a train/test split.
+site_constraint <- derive_split_constraints(site_graph, mode = "site")
+as.data.frame(site_constraint)[, c("sample_id", "group_id", "group_label")]
+```
+
+`mode = "site"` keeps every sample from a given site in the same group. The site
+assignment is also carried into the `split_spec` as a blocking annotation
+(`site_group`), so a downstream consumer can block on site even when the primary
+grouping is something else (e.g. subject):
+
+```{r site-spec}
+subject_then_block_by_site <- as_split_spec(
+  derive_split_constraints(site_graph, mode = "subject"),
+  graph = site_graph
+)
+subject_then_block_by_site$block_vars
+head(subject_then_block_by_site$sample_data[, c("sample_id", "group_id", "site_group")])
+```
+
+Samples assigned to more than one site are rejected rather than silently
+resolved, by both `validate_graph()` and `derive_split_constraints(mode = "site")`.
+
+The `Region` relation works the same way for a categorical tissue or anatomical
+region (`region_id` column, `sample_located_in_region` edge,
+`derive_split_constraints(mode = "region")`), so samples from the same region
+stay together across a split.
+
+```{r region-structure}
+region_meta <- data.frame(
+  sample_id = c("S1", "S2", "S3", "S4"),
+  region_id = c("cortex", "cortex", "hippocampus", "hippocampus"),
+  stringsAsFactors = FALSE
+)
+region_graph <- graph_from_metadata(region_meta, graph_name = "regions")
+as.data.frame(derive_split_constraints(region_graph, mode = "region"))[
+  , c("sample_id", "group_id", "group_label")
+]
+```
 
 ## Time ordering can come from precedence edges alone
 

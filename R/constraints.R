@@ -4,19 +4,23 @@
   subject = "Subject",
   batch = "Batch",
   study = "Study",
-  time = "Timepoint"
+  time = "Timepoint",
+  site = "Site",
+  region = "Region"
 )
 
 .depgraph_constraint_edge_map <- c(
   subject = "sample_belongs_to_subject",
   batch = "sample_processed_in_batch",
   study = "sample_from_study",
-  time = "sample_collected_at_timepoint"
+  time = "sample_collected_at_timepoint",
+  site = "sample_collected_at_site",
+  region = "sample_located_in_region"
 )
 
 .depgraph_normalize_constraint_mode <- function(mode) {
   mode <- tolower(as.character(mode)[1L])
-  .depgraph_assert(mode %in% c("subject", "batch", "study", "time", "composite"), paste0("Unsupported constraint mode: ", mode))
+  .depgraph_assert(mode %in% c("subject", "batch", "study", "time", "site", "region", "composite"), paste0("Unsupported constraint mode: ", mode))
   mode
 }
 
@@ -365,6 +369,56 @@
   )
 }
 
+.derive_site_constraints <- function(graph, samples = NULL) {
+  assignments <- .depgraph_direct_assignment(graph, "site", samples = samples)
+  warnings <- .depgraph_warning_if_missing(assignments, "site")
+  sample_map <- .depgraph_build_sample_map(assignments, "site")
+
+  split_constraint(
+    strategy = "site",
+    sample_map = sample_map,
+    recommended_downstream_args = list(
+      group_var = "group_id",
+      block_var = "group_id",
+      time_var = NULL,
+      ordering_required = FALSE
+    ),
+    metadata = list(
+      mode = "site",
+      strategy = "site",
+      relations_used = "sample_collected_at_site",
+      n_groups = length(unique(sample_map$group_id)),
+      n_samples = nrow(sample_map),
+      warnings = warnings
+    )
+  )
+}
+
+.derive_region_constraints <- function(graph, samples = NULL) {
+  assignments <- .depgraph_direct_assignment(graph, "region", samples = samples)
+  warnings <- .depgraph_warning_if_missing(assignments, "region")
+  sample_map <- .depgraph_build_sample_map(assignments, "region")
+
+  split_constraint(
+    strategy = "region",
+    sample_map = sample_map,
+    recommended_downstream_args = list(
+      group_var = "group_id",
+      block_var = "group_id",
+      time_var = NULL,
+      ordering_required = FALSE
+    ),
+    metadata = list(
+      mode = "region",
+      strategy = "region",
+      relations_used = "sample_located_in_region",
+      n_groups = length(unique(sample_map$group_id)),
+      n_samples = nrow(sample_map),
+      warnings = warnings
+    )
+  )
+}
+
 .derive_time_constraints <- function(graph, samples = NULL) {
   assignments <- .depgraph_direct_assignment(graph, "time", samples = samples)
   warnings <- .depgraph_warning_if_missing(assignments, "timepoint")
@@ -639,6 +693,15 @@
 #'   \item{\code{mode = "study"}}{Groups samples by the target of
 #'   \code{sample_from_study}.}
 #'
+#'   \item{\code{mode = "site"}}{Groups samples by the target of
+#'   \code{sample_collected_at_site}. Samples with no site assignment are
+#'   retained as singleton unlinked groups and recorded in metadata warnings.}
+#'
+#'   \item{\code{mode = "region"}}{Groups samples by the target of
+#'   \code{sample_located_in_region} (e.g. a categorical tissue or anatomical
+#'   region). Samples with no region assignment are retained as singleton
+#'   unlinked groups and recorded in metadata warnings.}
+#'
 #'   \item{\code{mode = "time"}}{Groups samples by the target of
 #'   \code{sample_collected_at_timepoint}. When \code{Timepoint} nodes have
 #'   \code{time_index} metadata, that value is used to derive
@@ -698,7 +761,7 @@
 #' constraint <- derive_split_constraints(g, mode = "subject")
 #' grouping_vector(constraint)
 #' @export
-derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
+derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "site", "region", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- .depgraph_normalize_constraint_mode(match.arg(mode))
   strategy <- match.arg(strategy)
@@ -709,6 +772,8 @@ derive_split_constraints <- function(graph, mode = c("subject", "batch", "study"
     batch = .derive_batch_constraints(graph, samples = samples),
     study = .derive_study_constraints(graph, samples = samples),
     time = .derive_time_constraints(graph, samples = samples),
+    site = .derive_site_constraints(graph, samples = samples),
+    region = .derive_region_constraints(graph, samples = samples),
     composite = if (identical(strategy, "strict")) {
       .derive_composite_strict_constraints(graph, samples = samples, via = via)
     } else {

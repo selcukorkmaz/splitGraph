@@ -10,6 +10,8 @@
     primary_group = rep(NA_character_, n),
     batch_group = rep(NA_character_, n),
     study_group = rep(NA_character_, n),
+    site_group = rep(NA_character_, n),
+    region_group = rep(NA_character_, n),
     timepoint_id = rep(NA_character_, n),
     time_index = rep(NA_real_, n),
     order_rank = rep(NA_integer_, n),
@@ -56,6 +58,8 @@
   if (identical(mode, "subject")) return("grouped_cv")
   if (identical(mode, "batch")) return("blocked_cv")
   if (identical(mode, "study")) return("leave_one_group_out")
+  if (identical(mode, "site")) return("leave_one_group_out")
+  if (identical(mode, "region")) return("grouped_cv")
   if (identical(mode, "time")) return("ordered_split")
   if (identical(mode, "composite") && identical(strategy, "strict")) return("custom_grouped_cv")
   if (identical(mode, "composite") && identical(strategy, "rule_based")) return("grouped_cv")
@@ -73,6 +77,7 @@
 
   batch_assignments <- .depgraph_direct_assignment(graph, "batch", samples = sample_ids)
   study_assignments <- .depgraph_direct_assignment(graph, "study", samples = sample_ids)
+  site_assignments <- .depgraph_direct_assignment(graph, "site", samples = sample_ids)
   time_constraint <- .derive_time_constraints(graph, samples = sample_ids)$sample_map
   time_constraint <- time_constraint[match(sample_ids, time_constraint$sample_node_id), , drop = FALSE]
 
@@ -81,6 +86,13 @@
 
   missing_study <- is.na(sample_data$study_group) | !nzchar(sample_data$study_group)
   sample_data$study_group[missing_study] <- .split_spec_match_assignment_key(study_assignments, sample_ids)[missing_study]
+
+  missing_site <- is.na(sample_data$site_group) | !nzchar(sample_data$site_group)
+  sample_data$site_group[missing_site] <- .split_spec_match_assignment_key(site_assignments, sample_ids)[missing_site]
+
+  region_assignments <- .depgraph_direct_assignment(graph, "region", samples = sample_ids)
+  missing_region <- is.na(sample_data$region_group) | !nzchar(sample_data$region_group)
+  sample_data$region_group[missing_region] <- .split_spec_match_assignment_key(region_assignments, sample_ids)[missing_region]
 
   missing_timepoint <- is.na(sample_data$timepoint_id) | !nzchar(sample_data$timepoint_id)
   sample_data$timepoint_id[missing_timepoint] <- time_constraint$timepoint_id[missing_timepoint]
@@ -192,6 +204,12 @@ as_split_spec <- function(constraint, graph = NULL) {
   if (identical(mode, "study")) {
     sample_data$study_group <- as.character(sample_map$group_label)
   }
+  if (identical(mode, "site")) {
+    sample_data$site_group <- as.character(sample_map$group_label)
+  }
+  if (identical(mode, "region")) {
+    sample_data$region_group <- as.character(sample_map$group_label)
+  }
 
   if ("timepoint_id" %in% names(sample_map)) {
     sample_data$timepoint_id <- as.character(sample_map$timepoint_id)
@@ -215,6 +233,12 @@ as_split_spec <- function(constraint, graph = NULL) {
   }
   if (!all(is.na(sample_data$study_group))) {
     block_vars <- c(block_vars, "study_group")
+  }
+  if (!all(is.na(sample_data$site_group))) {
+    block_vars <- c(block_vars, "site_group")
+  }
+  if (!all(is.na(sample_data$region_group))) {
+    block_vars <- c(block_vars, "region_group")
   }
 
   time_var <- if (!all(is.na(sample_data$order_rank))) "order_rank" else NULL

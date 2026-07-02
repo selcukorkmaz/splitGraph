@@ -6,3 +6,4 @@
 ^\.claude$
 ^splitGraph\.Rcheck$
 ^splitGraph_.*\.tar\.gz$
+^ROADMAP.*\.md$

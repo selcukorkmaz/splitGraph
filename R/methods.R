@@ -82,6 +82,8 @@ summary.dependency_graph <- function(object, ...) {
   Batch      = 1L,
   Study      = 1L,
   Timepoint  = 1L,
+  Site       = 1L,
+  Region     = 1L,
   Assay      = 2L,
   FeatureSet = 2L,
   Outcome    = 3L
@@ -97,6 +99,8 @@ summary.dependency_graph <- function(object, ...) {
     Assay      = "#72B7B2",
     FeatureSet = "#EECA3B",
     Outcome    = "#9D755D",
+    Site       = "#FF9DA6",
+    Region     = "#8CD17D",
     `_other_`  = "#B0B0B0"
   )
 }

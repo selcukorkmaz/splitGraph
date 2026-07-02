@@ -33,7 +33,13 @@
       "Bash(Rscript -e 'suppressMessages\\(devtools::load_all\\(\".\", quiet = TRUE\\)\\); rmarkdown::render\\(\"inst/doc/leakage-aware-workflow.Rmd\", output_format = \"html_document\", quiet = TRUE\\); cat\\(\"---LEAKAGE OK---\\\\n\"\\)')",
       "Bash(grep -nA 3 \"subject_has_outcome\" R/graph-build-auto.R)",
       "Bash(Rscript -e 'tools::.parse_CITATION_file\\(\"inst/CITATION\", meta = packageDescription\\(\"splitGraph\"\\)\\)')",
-      "Bash(Rscript *)"
+      "Bash(Rscript *)",
+      "Bash(R -q -e 'if\\(requireNamespace\\(\"testthat\",quietly=TRUE\\)\\){library\\(pkgload\\);load_all\\(\".\",quiet=TRUE\\);testthat::test_dir\\(\"tests/testthat\",reporter=\"summary\",stop_on_failure=FALSE\\)}')",
+      "Bash(R -q -e 'library\\(pkgload\\);load_all\\(\".\",quiet=TRUE\\);testthat::test_dir\\(\"tests/testthat\",reporter=\"summary\",stop_on_failure=FALSE\\)')",
+      "Bash(cd /Users/selcuk/Documents/GitHub/splitGraph; which R Rscript; R --version | head -1; echo \"---\"; ls ..; )",
+      "Bash(R -q -e 'if\\(requireNamespace\\(\"roxygen2\",quietly=TRUE\\)\\){roxygen2::roxygenise\\(\".\"\\)} else {cat\\(\"roxygen2 not installed\\\\n\"\\)}')",
+      "Bash(R CMD build .)",
+      "Bash(R CMD check --as-cran splitGraph_0.3.0.9000.tar.gz)"
     ]
   }
 }

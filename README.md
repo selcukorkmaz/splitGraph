@@ -48,8 +48,8 @@ correct while still violating the intended scientific separation.
   `validation_overrides` mechanism for explicit exceptions
 - typed query and traversal helpers (with a safety cap on `query_paths()`)
 - projected sample-dependency detection
-- split-constraint derivation for subject, batch, study, time, and composite
-  modes
+- split-constraint derivation for subject, batch, study, time, site, region,
+  and composite modes
 - translation of constraints into a stable, tool-agnostic `split_spec`
 - split-spec preflight validation and leakage summary helpers
 - JSON serialization for `dependency_graph` and `split_spec` so handoff
@@ -118,7 +118,9 @@ spec2 <- read_split_spec(path)
 For full control over node labels, attribute columns, and the feature-set
 provenance edges, use `create_nodes()` / `create_edges()` /
 `build_dependency_graph()` directly. `graph_from_metadata()` auto-builds
-the six sample-rooted canonical edges, `timepoint_precedes`, and the
+the eight sample-rooted canonical edges (including `sample_collected_at_site`
+from a `site_id` column and `sample_located_in_region` from a `region_id`
+column), `timepoint_precedes`, and the
 appropriate outcome edge (`sample_has_outcome` by default, or
 `subject_has_outcome` when `outcome_scope = "subject"`). The
 `featureset_generated_from_study` and `featureset_generated_from_batch`
@@ -162,7 +164,7 @@ vignette("adapter-cookbook", package = "splitGraph")
 ### Node types
 
 - `Sample`, `Subject`, `Batch`, `Study`, `Timepoint`, `Assay`, `FeatureSet`,
-  `Outcome`
+  `Outcome`, `Site`, `Region`
 
 ### Canonical edge types
 
@@ -174,6 +176,8 @@ vignette("adapter-cookbook", package = "splitGraph")
 - `sample_uses_featureset`
 - `sample_has_outcome`
 - `subject_has_outcome`
+- `sample_collected_at_site`
+- `sample_located_in_region`
 - `timepoint_precedes`
 - `featureset_generated_from_study`
 - `featureset_generated_from_batch`
@@ -212,6 +216,8 @@ subject_constraint <- derive_split_constraints(g, mode = "subject")
 batch_constraint   <- derive_split_constraints(g, mode = "batch")
 study_constraint   <- derive_split_constraints(g, mode = "study")
 time_constraint    <- derive_split_constraints(g, mode = "time")
+site_constraint    <- derive_split_constraints(g, mode = "site")
+region_constraint  <- derive_split_constraints(g, mode = "region")
 
 strict_composite <- derive_split_constraints(
   g, mode = "composite", strategy = "strict",

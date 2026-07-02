@@ -22,11 +22,22 @@
 # way that breaks round-trip compatibility with previously constructed
 # objects. A package release that only adds functions or fixes bugs must NOT
 # bump this string.
+#
+# Additive, backward-compatible changes do NOT bump this version. Adding new
+# node/edge types or new optional `sample_data` columns is safe because
+# readers tolerate their absence: `read_dependency_graph()` /
+# `read_split_spec()` fill any column missing from an older file with `NA`,
+# and older files therefore round-trip cleanly under a newer package. On this
+# rule, the 0.3.0 additions (the `Site` / `Region` node and edge types and the
+# `site_group` / `region_group` split_spec columns) are additive and keep
+# schema_version at "0.1.0". Only a change that would make an older file
+# unreadable (renaming/removing a column, changing a key's type or meaning)
+# warrants a bump, coordinated with a formal JSON Schema and a migration path.
 .depgraph_schema_version <- "0.1.0"
 
 .depgraph_node_types <- c(
   "Sample", "Subject", "Batch", "Study",
-  "Timepoint", "Assay", "FeatureSet", "Outcome"
+  "Timepoint", "Assay", "FeatureSet", "Outcome", "Site", "Region"
 )
 
 .depgraph_prefix_map <- c(
@@ -37,7 +48,9 @@
   Timepoint = "timepoint",
   Assay = "assay",
   FeatureSet = "featureset",
-  Outcome = "outcome"
+  Outcome = "outcome",
+  Site = "site",
+  Region = "region"
 )
 
 .depgraph_node_schema <- list(
@@ -46,8 +59,8 @@
     required_attrs = character(),
     optional_attrs = c(
       "subject_id", "batch_id", "study_id", "timepoint_id",
-      "assay_id", "featureset_id", "outcome_id", "sample_role",
-      "collection_date", "source_file"
+      "assay_id", "featureset_id", "outcome_id", "site_id", "region_id",
+      "sample_role", "collection_date", "source_file"
     )
   ),
   Subject = list(
@@ -103,6 +116,20 @@
       "outcome_name", "outcome_type", "outcome_value",
       "outcome_scale", "observation_level"
     )
+  ),
+  Site = list(
+    key_field = "site_id",
+    required_attrs = character(),
+    optional_attrs = c(
+      "site_name", "institution", "city", "country", "site_type"
+    )
+  ),
+  Region = list(
+    key_field = "region_id",
+    required_attrs = character(),
+    optional_attrs = c(
+      "region_name", "region_type", "tissue", "organ", "coordinate_system"
+    )
   )
 )
 
@@ -148,17 +175,19 @@
     "subject_has_outcome",
     "timepoint_precedes",
     "featureset_generated_from_study",
-    "featureset_generated_from_batch"
+    "featureset_generated_from_batch",
+    "sample_collected_at_site",
+    "sample_located_in_region"
   ),
   from_type = c(
     "Sample", "Sample", "Sample", "Sample", "Sample",
     "Sample", "Sample", "Subject", "Timepoint", "FeatureSet",
-    "FeatureSet"
+    "FeatureSet", "Sample", "Sample"
   ),
   to_type = c(
     "Subject", "Batch", "Study", "Timepoint", "Assay",
     "FeatureSet", "Outcome", "Outcome", "Timepoint", "Study",
-    "Batch"
+    "Batch", "Site", "Region"
   ),
   stringsAsFactors = FALSE
 )
@@ -190,6 +219,22 @@
     max_targets = 1L,
     missing_code = NULL,
     multiple_code = "sample_multiple_batch_assignments",
+    missing_severity = NULL,
+    multiple_severity = "error"
+  ),
+  sample_collected_at_site = list(
+    min_targets = 0L,
+    max_targets = 1L,
+    missing_code = NULL,
+    multiple_code = "sample_multiple_site_assignments",
+    missing_severity = NULL,
+    multiple_severity = "error"
+  ),
+  sample_located_in_region = list(
+    min_targets = 0L,
+    max_targets = 1L,
+    missing_code = NULL,
+    multiple_code = "sample_multiple_region_assignments",
     missing_severity = NULL,
     multiple_severity = "error"
   )

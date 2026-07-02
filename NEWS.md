@@ -1,3 +1,21 @@
+# splitGraph 0.3.0.9000 (development)
+
+## New features
+
+- **`Site` node type and `sample_collected_at_site` edge.** Multi-site / 
+  multi-center structure is now a first-class typed relation.
+  `graph_from_metadata()` auto-detects a `site_id` column; `validate_graph()`
+  flags samples assigned to multiple sites (`sample_multiple_site_assignments`);
+  `derive_split_constraints(mode = "site")` groups samples by collection site
+  (and rejects ambiguous multi-site assignments); and `as_split_spec()` carries
+  `site_group` as a blocking annotation in `sample_data`. `Site` also
+  participates in `mode = "composite"` derivations and the typed `plot()` layout.
+- **`Region` node type and `sample_located_in_region` edge.** Categorical tissue
+  / anatomical region structure is now a first-class typed relation, mirroring
+  `Site`: `region_id` auto-detection, multi-region validation
+  (`sample_multiple_region_assignments`), `derive_split_constraints(mode = "region")`,
+  a `region_group` blocking annotation in `split_spec`, and composite/plot support.
+
 # splitGraph 0.2.0
 
 ## New features
