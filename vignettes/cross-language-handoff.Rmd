@@ -3,12 +3,8 @@ title: "Cross-language handoff: R to JSON to Python to scikit-learn"
 author: "Selçuk Korkmaz"
 date: "`r Sys.Date()`"
 output:
-  rmarkdown::html_document:
+  rmarkdown::html_vignette:
     toc: true
-    toc_float: true
-    number_sections: true
-    theme: flatly
-    highlight: tango
 vignette: >
   %\VignetteIndexEntry{Cross-language handoff: R to JSON to Python to scikit-learn}
   %\VignetteEngine{knitr::rmarkdown}
@@ -30,8 +26,11 @@ constraint in R, serialize it to JSON, read it in Python with the shipped
 `splitspec` reference consumer, and hand the recovered grouping straight to a
 scikit-learn resampler.
 
-The Python chunks below are shown but not executed when the vignette is built
-(so building needs no Python). The R chunks run.
+The Python chunks below are shown but not executed, so building the vignette
+needs no Python. To keep the central claim honest rather than asserted, the
+vignette *does* run the shipped Python reader through R when a `python3`
+interpreter is available (see "Verify the round-trip"), and shows that the
+grouping it recovers matches R's exactly.
 
 # Derive and serialize in R
 
@@ -78,7 +77,7 @@ system.file("python", package = "splitGraph")
 
 Point Python at that directory (or install/copy the `splitspec` package), then:
 
-```{python read, eval=FALSE}
+```python
 import sys
 # sys.path.append(<the inst/python path printed above>)
 from splitspec import load_split_spec
@@ -97,13 +96,50 @@ spec.grouping()
 df = spec.to_frame()       # pandas DataFrame of sample_data
 ```
 
+# Verify the round-trip
+
+Rather than take the comment above on faith, we can run the shipped Python
+reader on the exact file we just wrote and compare what it recovers to R's
+`grouping_vector()`. This is what `inst/python/conformance.py` does; the chunk
+below invokes it through R and only runs when a `python3` interpreter is
+present, so the vignette still builds without Python.
+
+```{r conformance, eval = nzchar(Sys.which("python3")) && requireNamespace("jsonlite", quietly = TRUE)}
+script   <- system.file("python", "conformance.py", package = "splitGraph")
+out_path <- tempfile(fileext = ".json")
+
+# Run the Python reader on our JSON file; it writes back what it recovered.
+status <- system2(
+  "python3", c("-B", shQuote(script), shQuote(path), shQuote(out_path)),
+  stdout = FALSE, stderr = FALSE
+)
+
+if (status == 0 && file.exists(out_path)) {
+  recovered <- jsonlite::fromJSON(out_path)
+
+  # Grouping recovered by Python:
+  print(unlist(recovered$grouping))
+
+  # Identical to the grouping R produced?
+  r_grouping <- grouping_vector(constraint)
+  cat("Python matches R exactly:",
+      identical(unlist(recovered$grouping)[names(r_grouping)],
+                r_grouping[names(r_grouping)]), "\n")
+}
+```
+
+The same script also checks `order_rank`, and the package's test suite runs this
+comparison as an automated conformance test (skipped when Python is absent, and
+never on CRAN). The point is that the partition is *decided once* in R and only
+*reproduced* elsewhere — the two languages cannot disagree.
+
 # Drive scikit-learn
 
 The grouping vector plugs directly into `GroupKFold` (or
 `StratifiedGroupKFold`), guaranteeing that all samples from a subject land in
 the same fold:
 
-```{python sklearn, eval=FALSE}
+```python
 import numpy as np
 from sklearn.model_selection import GroupKFold
 
@@ -119,7 +155,7 @@ for train_idx, test_idx in GroupKFold(n_splits=3).split(X, groups=groups):
 For an ordered evaluation (a `mode = "time"` spec), sort by `order_rank` first
 and use `TimeSeriesSplit`:
 
-```{python tss, eval=FALSE}
+```python
 from sklearn.model_selection import TimeSeriesSplit
 
 order = spec.ordered_index()    # row indices sorted by order_rank
@@ -131,9 +167,9 @@ for train_idx, test_idx in TimeSeriesSplit(n_splits=3).split(df_ordered):
 
 # Why this matters
 
-Because the grouping is decided in R (from explicit, validated dependency
-structure) and merely *reproduced* in Python, the leakage-aware partition is
-identical across languages. `split_spec` is the contract; scikit-learn —
-like `rsample` on the R side — is just one consumer of it. The package ships a
-conformance check (`inst/python/conformance.py`) that asserts the Python reader
-recovers exactly the grouping and `order_rank` that R emitted.
+The leakage-aware partition is decided *once*, in R, from explicit and validated
+dependency structure — and every other language merely *reproduces* it from the
+`split_spec`. Nothing about the split logic is re-implemented in Python, so the
+two sides cannot drift. `split_spec` is the contract; scikit-learn (here) and
+`rsample` (on the R side) are just interchangeable consumers of it. That is what
+makes it an interchange format rather than internal plumbing for any one tool.

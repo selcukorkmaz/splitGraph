@@ -203,3 +203,62 @@ test_that("summarize_leakage_risks combines graph, constraint, and split-spec di
   expect_true("ordering_required" %in% names(summary_obj$split_spec_summary))
   expect_true(length(capture.output(print(summary_obj))) > 0L)
 })
+
+# ---- leakage-summary edge branches ------------------------------------------
+
+test_that("summarize_leakage_risks reports no risks for a structurally clean graph", {
+  clean <- data.frame(
+    sample_id  = c("S1", "S2"),
+    subject_id = c("P1", "P2"),
+    study_id   = c("ST1", "ST2"),
+    stringsAsFactors = FALSE
+  )
+  g <- graph_from_metadata(clean)
+  expect_true(validate_graph(g)$valid)
+
+  # No constraint and no split_spec: every summary source is empty.
+  rs <- summarize_leakage_risks(g)
+  expect_s3_class(rs, "leakage_risk_summary")
+  expect_equal(nrow(as.data.frame(rs)), 0L)
+  expect_match(rs$overview, "No structural leakage risks")
+})
+
+test_that("summarize_leakage_risks surfaces constraint warnings as diagnostics", {
+  meta <- data.frame(
+    sample_id  = c("S1", "S2", "S3"),
+    subject_id = c("P1", "P2", "P3"),
+    site_id    = c("NYC", "NYC", NA),   # S3 has no site -> constraint warning
+    stringsAsFactors = FALSE
+  )
+  g <- graph_from_metadata(meta)
+  constraint <- derive_split_constraints(g, mode = "site")
+  expect_true(length(constraint$metadata$warnings) > 0L)
+
+  df <- as.data.frame(summarize_leakage_risks(g, constraint = constraint))
+  warn_rows <- df[df$category == "constraint_warning", , drop = FALSE]
+  expect_true(nrow(warn_rows) >= 1L)
+  expect_true(all(warn_rows$source == "constraint"))
+  expect_true(all(is.na(warn_rows$severed)))
+})
+
+test_that("summarize_leakage_risks reports a failing preflight and phantom block vars", {
+  meta <- data.frame(
+    sample_id  = c("S1", "S2", "S3", "S4"),
+    subject_id = c("P1", "P1", "P2", "P2"),
+    batch_id   = c("B1", "B2", "B1", "B2"),
+    stringsAsFactors = FALSE
+  )
+  g <- graph_from_metadata(meta)
+  spec <- as_split_spec(derive_split_constraints(g, mode = "subject"), graph = g)
+
+  # Blank a declared block variable so preflight validation flags it, and add a
+  # phantom block variable that is absent from sample_data.
+  spec$sample_data$batch_group <- NA_character_
+  spec$block_vars <- c(spec$block_vars, "phantom_group")
+
+  df <- as.data.frame(summarize_leakage_risks(g, split_spec = spec))
+  # The preflight issue is carried into the split_spec diagnostics.
+  expect_true(any(df$source == "split_spec" & df$severity != "advisory"))
+  # The phantom block variable is reported as available for 0 samples.
+  expect_true(any(grepl("phantom_group.*for 0 of", df$message)))
+})

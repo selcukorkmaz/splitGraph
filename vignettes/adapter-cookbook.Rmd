@@ -3,12 +3,8 @@ title: "Adapter cookbook: from split_spec to native resamples"
 author: "Selçuk Korkmaz"
 date: "`r Sys.Date()`"
 output:
-  rmarkdown::html_document:
+  rmarkdown::html_vignette:
     toc: true
-    toc_float: true
-    number_sections: true
-    theme: flatly
-    highlight: tango
 vignette: >
   %\VignetteIndexEntry{Adapter cookbook: from split_spec to native resamples}
   %\VignetteEngine{knitr::rmarkdown}
@@ -39,10 +35,17 @@ if (requireNamespace("pkgload", quietly = TRUE) &&
 about `rsample`, `tidymodels`, or any other resampling engine. The handoff
 contract is the `sample_data` table inside the spec plus a few scalar
 fields (`group_var`, `block_vars`, `time_var`, `ordering_required`,
-`recommended_resampling`).
+`recommended_resampling`), together with provenance the adapter can inspect
+to choose a strategy (`constraint_mode`, `constraint_strategy`).
 
-This cookbook shows three small, self-contained adapters that turn a
-`split_spec` into something a downstream workflow can use:
+You do not always have to write this glue yourself. The reference downstream
+consumer, [**bioLeak**](https://github.com/selcukorkmaz/bioLeak), takes a
+`split_spec` directly — `bioLeak::as_leaksplits(spec, data, outcome)` builds an
+executable, leakage-audited split plan from it. This cookbook is for the other
+case: when you want to feed a `split_spec` into a different engine, or
+understand exactly what a consumer has to honor. It shows three small,
+self-contained adapters that turn a `split_spec` into something a downstream
+workflow can use:
 
 1. A **base-R adapter** that returns a list of `(train, test)` row-index
    pairs — runnable here, no extra dependencies.
@@ -128,6 +131,43 @@ That is the entire downstream contract: take `spec`, take an observation
 frame, return train/assess index lists. Anything more complicated is
 specific to a resampling library.
 
+### Honoring block variables
+
+`group_var` is the primary split unit, but `split_spec` also advertises coarser
+`block_vars` — dependency axes that should ideally not straddle a fold even when
+they are not the grouping unit. They are per-sample columns aligned to
+`sample_id`, so an adapter reads them exactly like `group_var`:
+
+```{r block-vars}
+spec$block_vars
+head(spec$sample_data[, c("sample_id", spec$group_var, spec$block_vars)])
+```
+
+A block-aware adapter can pass these to a resampler's blocking/strata argument,
+or simply audit its folds. Here we check whether any batch straddles the
+train/assess boundary — a leak a subject-only split does not prevent, and
+exactly what carrying `batch_group` on the spec lets a consumer catch:
+
+```{r block-audit}
+block <- spec$block_vars[[1]]
+block_of <- setNames(spec$sample_data[[block]], spec$sample_data$sample_id)
+
+do.call(rbind, lapply(folds, function(f) {
+  data.frame(
+    held_out_group    = f$group,
+    straddling_batches = paste(
+      intersect(block_of[obs$sample_id[f$train]],
+                block_of[obs$sample_id[f$assess]]),
+      collapse = ", "
+    )
+  )
+}))
+```
+
+Every batch appears on both sides, because grouping by subject does not also
+block by batch. Whether that matters is a scientific decision — the point is
+that the spec carries enough information for the adapter to make it.
+
 ## Adapter 2 — `rsample::group_vfold_cv()`
 
 Grouped CV keyed to `group_id`. The downstream package would typically
@@ -201,26 +241,72 @@ adapter is just a thin shim that consumes it.
 ## Going across language boundaries via JSON
 
 If the downstream consumer is not in R, write the spec to JSON and let the
-consumer (Python, Julia, a CLI) interpret it.
+consumer interpret it. The on-disk format is a formal, versioned contract: it
+has a JSON Schema (Draft 2020-12) shipped in `inst/schema/`, each file names it
+via a `$schema` key, and `validate_split_spec_json()` checks a file against it
+before you consume it.
 
 ```{r serialize, eval = requireNamespace("jsonlite", quietly = TRUE)}
 tmp <- tempfile(fileext = ".json")
 write_split_spec(spec, tmp)
 
-# Inspect the first ~30 lines so the on-disk format is visible.
-cat(readLines(tmp, n = 30), sep = "\n")
+# The file opens with its $schema reference and schema_version.
+cat(readLines(tmp, n = 5), sep = "\n")
 
-# And read it back exactly.
+# Validate the file against the shipped JSON Schema, then read it back exactly.
+validate_split_spec_json(tmp)$valid
 spec2 <- read_split_spec(tmp)
 identical(spec$sample_data$group_id, spec2$sample_data$group_id)
 
 unlink(tmp)
 ```
 
-The same pair exists for `dependency_graph` (`write_dependency_graph()` /
-`read_dependency_graph()`). Both formats are documented under
-`?write_split_spec` and `?write_dependency_graph` and include a
-`schema_version` field so consumers can detect drift.
+You do not have to write a JSON parser to consume this from Python: the package
+ships a pure-Python reference reader (`inst/python/splitspec`) that recovers the
+same grouping and ordering and drives scikit-learn `GroupKFold` /
+`TimeSeriesSplit`. The *cross-language-handoff* vignette walks the full
+R → JSON → Python → scikit-learn path:
+
+```{r xlang-pointer, eval = FALSE}
+vignette("cross-language-handoff", package = "splitGraph")
+```
+
+The same read/write pair exists for `dependency_graph`
+(`write_dependency_graph()` / `read_dependency_graph()`, validated with
+`validate_graph_json()`). Both formats are documented under `?write_split_spec`
+and `?write_dependency_graph`. Because `schema_version` follows a documented
+major-compatibility policy, a file written by an older splitGraph still loads;
+`migrate_split_spec_json()` upgrades it to the current version in place.
+
+## Letting the spec pick the adapter
+
+The three adapters above cover different shapes of split. You do not have to
+choose between them by hand: `split_spec` carries `recommended_resampling`, so a
+single dispatcher can route each spec to the right one. This makes a pipeline
+that handles subject, batch, time, and composite specs uniformly.
+
+```{r dispatch}
+recommend_adapter <- function(spec) {
+  switch(
+    spec$recommended_resampling,
+    grouped_cv          = "group_vfold_cv (group = group_id)",
+    blocked_cv          = "group_vfold_cv (group = group_id)",
+    custom_grouped_cv   = "group_vfold_cv (group = group_id)",
+    leave_one_group_out = "leave-one-group-out over group_id",
+    ordered_split       = "rolling_origin (order by order_rank)",
+    "group_vfold_cv (default)"
+  )
+}
+
+# The subject spec recommends grouped CV; a time-mode spec recommends ordering.
+recommend_adapter(spec)
+time_spec <- as_split_spec(derive_split_constraints(g, mode = "time"), graph = g)
+recommend_adapter(time_spec)
+```
+
+`recommended_resampling` is only a hint — your adapter is free to override it —
+but it lets one entry point serve every constraint mode without inspecting the
+graph.
 
 ## When you need a custom adapter
 
@@ -228,10 +314,16 @@ The only assumptions an adapter has to honor:
 
 - `split_spec$sample_data` is keyed by `sample_id` (character).
 - `split_spec$group_var` is the column that holds the splitting unit.
-- `split_spec$block_vars` are present-but-coarser blocking columns.
+- `split_spec$block_vars` are present-but-coarser blocking columns. Depending on
+  the graph these include `batch_group`, `study_group`, `site_group`,
+  `region_group`, `platform_group`, and `assay_group` — an adapter can block or
+  stratify on any that are present.
 - `split_spec$time_var`, when non-`NULL`, defines the ordering.
 - `split_spec$recommended_resampling` is a hint, not a contract — your
-  adapter is free to ignore it.
+  adapter is free to ignore it. `constraint_mode` / `constraint_strategy` are
+  available if you want to branch (e.g. treat `"time"` specs as ordered).
 
-That is the whole interface. As long as those five fields are honored,
-anything is a valid downstream consumer.
+That is the whole interface, and it is stable: `bioLeak::as_leaksplits()`
+consumes exactly these fields, and a contract test in splitGraph pins the seam
+so it cannot drift. As long as those fields are honored, anything is a valid
+downstream consumer.

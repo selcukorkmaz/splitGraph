@@ -3,12 +3,8 @@ title: "Modeling site, platform, relatedness, and spatial structure"
 author: "Selçuk Korkmaz"
 date: "`r Sys.Date()`"
 output:
-  rmarkdown::html_document:
+  rmarkdown::html_vignette:
     toc: true
-    toc_float: true
-    number_sections: true
-    theme: flatly
-    highlight: tango
 vignette: >
   %\VignetteIndexEntry{Modeling site, platform, relatedness, and spatial structure}
   %\VignetteEngine{knitr::rmarkdown}
@@ -26,16 +22,27 @@ library(splitGraph)
 ```
 
 Beyond the classic subject / batch / study / time relations, `splitGraph`
-models four further sources of leakage: multi-**site** studies, sequencing /
-measurement **platform**, and two genuinely *pairwise* relations — genetic
-**relatedness** and **spatial** proximity. This vignette shows how to build and
-group by each.
+models several further leakage axes, in two families:
 
-# Cluster-style relations: site, platform, assay
+- **Cluster-style relations** — collection **site**, tissue / anatomical
+  **region**, sequencing **platform**, and **assay** — are categorical
+  groupings. Each is auto-detected from a metadata column and handled by its own
+  constraint mode, exactly like `subject` or `batch`.
+- **Pairwise relations** — genetic **relatedness** and **spatial** proximity —
+  are continuous and defined *between pairs*. They are modelled as thresholded
+  edges and grouped by transitive closure, a partition a single categorical
+  column cannot express.
 
-`graph_from_metadata()` auto-detects `site_id`, `platform_id`, and `assay_id`
-columns and builds the corresponding typed nodes and edges. Each then has its
-own constraint mode.
+This vignette builds and groups by each, and shows how the threshold drives the
+pairwise grouping.
+
+# Cluster-style relations: site, region, platform, assay
+
+`graph_from_metadata()` auto-detects `site_id`, `region_id`, `platform_id`, and
+`assay_id` columns and builds the corresponding typed nodes and edges. Each then
+has its own constraint mode. The example below uses site, platform, and assay;
+`region` behaves identically (a `region_id` column and `mode = "region"`) and is
+omitted only to keep the output short.
 
 ```{r cluster}
 meta <- data.frame(
@@ -54,8 +61,21 @@ grouping_vector(derive_split_constraints(g, mode = "platform"))
 grouping_vector(derive_split_constraints(g, mode = "assay"))
 ```
 
-Each of these annotations is also carried into `split_spec` as a blocking
-variable, and any of them can participate in a composite derivation:
+Whatever mode is primary, every detected cluster relation is also carried into
+the `split_spec` as a *blocking annotation*, so a downstream consumer can block
+on site, platform, or assay even when the split unit is something else — here,
+subject:
+
+```{r block-annotations}
+spec <- as_split_spec(derive_split_constraints(g, mode = "subject"), graph = g)
+spec$block_vars
+head(spec$sample_data[, c("sample_id", "group_id",
+                          "site_group", "platform_group", "assay_group")])
+```
+
+Any of these relations can also participate in a **composite** derivation, where
+several dependency sources are combined and each connected component becomes one
+group:
 
 ```{r composite}
 constraint <- derive_split_constraints(
@@ -68,25 +88,28 @@ grouping_vector(constraint)
 # Pairwise relation: genetic relatedness
 
 Some leakage is pairwise and continuous rather than a clean grouping. Genetic
-relatedness is the canonical example: a kinship coefficient links *pairs* of
-subjects. `relatedness_edges_from_kinship()` keeps pairs at or above a threshold
-and emits `subject_related_to` edges; `mode = "relatedness"` then groups by
-transitive closure over those edges (so a chain of related individuals lands in
-one group).
+relatedness is the canonical example: a kinship coefficient — typically from a
+tool such as KING or PLINK — links *pairs* of subjects.
+`relatedness_edges_from_kinship()` takes such a pair table, keeps pairs at or
+above a threshold, and emits `subject_related_to` edges; `mode = "relatedness"`
+then groups by transitive closure over those edges (so a chain of related
+individuals lands in one group).
 
 ```{r relatedness}
-# P1-P2 and P2-P3 are related above threshold; P4 is unrelated.
+# A kinship table over subject pairs (one sample per subject here for clarity).
+# P1-P2 and P2-P3 clear the threshold and chain together; P5-P6 form a second
+# related pair; P1-P4 is too weak to count.
 kin <- data.frame(
-  id1 = c("P1", "P2", "P1"),
-  id2 = c("P2", "P3", "P4"),
-  kinship = c(0.25, 0.20, 0.02),
+  id1     = c("P1", "P2", "P1", "P5"),
+  id2     = c("P2", "P3", "P4", "P6"),
+  kinship = c(0.25, 0.20, 0.02, 0.30),
   stringsAsFactors = FALSE
 )
 rel_edges <- relatedness_edges_from_kinship(kin, threshold = 0.1)
 
 meta_r <- data.frame(
-  sample_id  = paste0("S", 1:4),
-  subject_id = c("P1", "P2", "P3", "P4"),
+  sample_id  = paste0("S", 1:6),
+  subject_id = paste0("P", 1:6),
   stringsAsFactors = FALSE
 )
 samples  <- create_nodes(meta_r, "Sample", "sample_id")
@@ -96,29 +119,70 @@ belongs  <- create_edges(meta_r, "sample_id", "subject_id",
 
 g_rel <- build_dependency_graph(list(samples, subjects), list(belongs, rel_edges))
 
-# S1, S2, S3 (P1-P2-P3 related) group together; S4 (P4) is separate.
-grouping_vector(derive_split_constraints(g_rel, mode = "relatedness"))
+rel_groups <- grouping_vector(derive_split_constraints(g_rel, mode = "relatedness"))
+rel_groups
+```
+
+The grouping is a transitive closure over the `subject_related_to` edges. The
+network below draws those edges between subjects, coloured by the relatedness
+group each subject (and therefore its samples) lands in: the P1–P2–P3 chain
+becomes one group even though P1 and P3 were never linked directly, P5–P6 form a
+second, and the unrelated P4 stands alone.
+
+```{r rel-plot, fig.width = 6.5, fig.height = 4.5}
+subject_group <- setNames(rel_groups[meta_r$sample_id], meta_r$subject_id)
+kept_pairs <- kin[kin$kinship >= 0.1, c("id1", "id2")]
+rel_net <- igraph::graph_from_data_frame(
+  kept_pairs, directed = FALSE,
+  vertices = data.frame(name = meta_r$subject_id)
+)
+
+palette_rel <- c("#4C78A8", "#F58518", "#54A24B", "#B279A2")
+set.seed(1)
+plot(rel_net,
+     vertex.color       = palette_rel[as.integer(factor(subject_group[igraph::V(rel_net)$name]))],
+     vertex.size        = 34,
+     vertex.label.color = "white",
+     vertex.label.font  = 2,
+     edge.color         = "grey60",
+     edge.width         = 2,
+     main               = "Relatedness clusters (kinship >= 0.1)")
+```
+
+The threshold is the key knob, and it belongs to the *edge-building* step, not
+the grouping. Raising it drops weaker links: at `0.22` the P2–P3 pair (kinship
+`0.20`) no longer qualifies, so that chain breaks and P3 splits into its own
+group, while the stronger P5–P6 pair is untouched:
+
+```{r rel-threshold}
+rel_strict <- relatedness_edges_from_kinship(kin, threshold = 0.22)
+g_rel_strict <- build_dependency_graph(list(samples, subjects), list(belongs, rel_strict))
+
+grouping_vector(derive_split_constraints(g_rel_strict, mode = "relatedness"))
 ```
 
 # Pairwise relation: spatial proximity
 
-Spatial proximity works the same way over sample coordinates.
-`spatial_edges_from_coords()` connects samples within a radius (Euclidean
-distance over the coordinate columns), and `mode = "spatial"` groups the
-resulting connected components.
+Spatial proximity works the same way over sample coordinates — for example spot
+locations from spatial transcriptomics, positions on a tissue slide, or
+geographic site coordinates. `spatial_edges_from_coords()` connects samples
+within a radius (Euclidean distance over the coordinate columns), and
+`mode = "spatial"` groups the resulting connected components.
 
 ```{r spatial}
+# Two spatial clusters. Cluster 1 (S1-S3) is a chain: neighbouring pairs are
+# within the radius, but the endpoints are not.
 coords <- data.frame(
-  sample_id = paste0("S", 1:4),
-  x = c(0, 1, 2, 40),
-  y = c(0, 0, 0, 40),
+  sample_id = paste0("S", 1:6),
+  x = c(0, 1, 2,  6.0, 6.9, 6.2),
+  y = c(0, 1, 0,  6.0, 6.6, 5.3),
   stringsAsFactors = FALSE
 )
 adj_edges <- spatial_edges_from_coords(coords, radius = 1.5)
 
 meta_s <- data.frame(
-  sample_id  = paste0("S", 1:4),
-  subject_id = paste0("P", 1:4),
+  sample_id  = paste0("S", 1:6),
+  subject_id = paste0("P", 1:6),
   stringsAsFactors = FALSE
 )
 samples_s  <- create_nodes(meta_s, "Sample", "sample_id")
@@ -128,12 +192,58 @@ belongs_s  <- create_edges(meta_s, "sample_id", "subject_id",
 
 g_sp <- build_dependency_graph(list(samples_s, subjects_s), list(belongs_s, adj_edges))
 
-# S1-S2-S3 form a proximity chain; S4 is isolated.
-grouping_vector(derive_split_constraints(g_sp, mode = "spatial"))
+sp_groups <- grouping_vector(derive_split_constraints(g_sp, mode = "spatial"))
+sp_groups
 ```
 
-Because the thresholds are applied up front in the edge-building helpers, they
-are *derivation inputs*, not modeling choices: `splitGraph` forms groups over
-whatever edges survive, and never computes folds itself. The resulting
-`split_spec` is handed to a downstream consumer for execution, exactly as with
-every other mode.
+Plotting the coordinates, drawing the within-radius adjacency edges in grey, and
+colouring points by the derived group makes the transitive closure concrete:
+S1–S2 and S2–S3 are each within the `1.5` radius, so all three share a group
+even though S1 and S3 are `2` units apart and were never linked directly. Every
+sample in the second cluster is likewise reachable from the others, while the
+two clusters are far enough apart to stay separate:
+
+```{r sp-plot, fig.width = 6.5, fig.height = 5}
+sp_grp <- factor(sp_groups[coords$sample_id])
+row_of <- setNames(seq_len(nrow(coords)), coords$sample_id)
+from_i <- row_of[sub("^sample:", "", adj_edges$data$from)]
+to_i   <- row_of[sub("^sample:", "", adj_edges$data$to)]
+palette_sp <- c("#4C78A8", "#F58518")
+
+plot(coords$x, coords$y, type = "n", asp = 1, xlab = "x", ylab = "y",
+     main = "Spatial groups (radius = 1.5)")
+segments(coords$x[from_i], coords$y[from_i],
+         coords$x[to_i],   coords$y[to_i], col = "grey60", lwd = 2)
+points(coords$x, coords$y, pch = 19, cex = 3.5, col = palette_sp[as.integer(sp_grp)])
+text(coords$x, coords$y, labels = coords$sample_id, col = "white", cex = 0.8, font = 2)
+legend("topleft", legend = levels(sp_grp), pch = 19,
+       col = palette_sp[seq_along(levels(sp_grp))], title = "Spatial group", bty = "n")
+```
+
+# Deriving on a subset is leakage-safe
+
+Real splits are derived on a *subset* of samples — the training rows, say. For
+pairwise (and composite) modes this raises a subtle question: if a sample that
+*bridges* two others is left out of the subset, could those two still inherit a
+shared group from the full graph? They do not. When you pass `samples =`,
+grouping is recomputed within that subset, so structure that exists only through
+an excluded sample never leaks across the split.
+
+The spatial chain makes this visible. S1 and S3 shared a group only because S2
+bridged them; ask for S1 and S3 alone, and they correctly fall into separate
+groups:
+
+```{r subset-scoping}
+grouping_vector(
+  derive_split_constraints(g_sp, mode = "spatial", samples = c("S1", "S3"))
+)
+```
+
+# Thresholds are inputs, not modeling
+
+Because the threshold (kinship cutoff, spatial radius) is applied up front in the
+edge-building helpers, it is a *derivation input*, not a modeling choice:
+`splitGraph` forms groups over whatever edges survive and never computes folds
+itself. The resulting `split_spec` is handed to a downstream consumer for
+execution, exactly as with every other mode — see the *adapter-cookbook* and
+*cross-language-handoff* vignettes for that step.

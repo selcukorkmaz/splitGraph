@@ -3,12 +3,8 @@ title: "splitGraph: From Metadata to Leakage-Aware Split Design"
 author: "Selçuk Korkmaz"
 date: "`r Sys.Date()`"
 output:
-  rmarkdown::html_document:
+  rmarkdown::html_vignette:
     toc: true
-    toc_float: true
-    number_sections: true
-    theme: flatly
-    highlight: tango
 vignette: >
   %\VignetteIndexEntry{splitGraph: From Metadata to Leakage-Aware Split Design}
   %\VignetteEngine{knitr::rmarkdown}
@@ -54,6 +50,8 @@ turns metadata into a typed dependency graph that can be:
 - converted into deterministic split constraints
 - translated into a stable, tool-agnostic split specification through the
   `split_spec` class and `as_split_spec()` / `validate_split_spec()` API
+- serialized to a schema-versioned JSON that any language can consume (an R
+  session, or the shipped Python reader driving scikit-learn)
 
 The package is intentionally narrow. It does not fit models, run preprocessing
 pipelines, or generate resamples by itself. Its job is to represent dependency
@@ -93,10 +91,11 @@ make naive random splitting risky.
 
 When your metadata already uses the canonical column names (`sample_id`,
 `subject_id`, `batch_id`, `study_id`, `timepoint_id`, `time_index`,
-`assay_id`, `featureset_id`, `outcome_id` / `outcome_value`),
-`graph_from_metadata()` does ingestion, typed node construction, canonical
-edge construction, and optional `timepoint_precedes` derivation in a single
-call:
+`assay_id`, `featureset_id`, `site_id`, `region_id`, `platform_id`,
+`outcome_id` / `outcome_value`), `graph_from_metadata()` does ingestion, typed
+node construction, canonical edge construction, and optional
+`timepoint_precedes` derivation in a single call. Any canonical column that is
+absent is simply skipped, so you only supply the structure you have:
 
 ```{r fast-path}
 quick_graph <- graph_from_metadata(
@@ -498,8 +497,14 @@ not just which metadata columns happen to match.
 
 ## Derive split constraints from the graph
 
-`splitGraph` can derive direct constraints for subject, batch, study, time, and
-site as well as composite constraints that combine multiple dependency sources.
+`splitGraph` derives *direct* constraints — one grouping node per sample — for
+`subject`, `batch`, `study`, `time`, `site`, `region`, `platform`, and `assay`,
+plus *composite* constraints that combine several dependency sources, and
+*pairwise* constraints (`relatedness`, `spatial`) built from thresholded
+similarity. This section demonstrates the core four (`subject`, `batch`,
+`study`, `time`) and both composite strategies; the cluster relations (`site`,
+`region`, `platform`, `assay`) and the pairwise relations are covered in their
+own sections below and, in more depth, in the *modeling-structure* vignette.
 
 ```{r constraints}
 subject_constraint <- derive_split_constraints(graph, mode = "subject")
@@ -587,7 +592,27 @@ one dependency component. The rule-based composite constraint is different: it
 uses the highest-priority available dependency per sample, so `S5` falls back
 to study-level grouping instead of becoming a composite component.
 
-## Multi-site (center) structure
+## Cluster-style relations: site, region, platform, assay
+
+Beyond subject/batch/study/time, several other metadata columns define
+*cluster-style* leakage axes — categorical groupings a model can memorize
+instead of generalizing across. `splitGraph` models each as a first-class node
+type with its own auto-detected column, validation rule, and constraint mode:
+
+| Relation | Column | Edge | Mode |
+|---|---|---|---|
+| Collection site / center | `site_id` | `sample_collected_at_site` | `"site"` |
+| Tissue / anatomical region | `region_id` | `sample_located_in_region` | `"region"` |
+| Sequencing / measurement platform | `platform_id` | `sample_run_on_platform` | `"platform"` |
+| Assay / modality | `assay_id` | `sample_measured_by_assay` | `"assay"` |
+
+They all behave identically: `graph_from_metadata()` auto-detects the column,
+`validate_graph()` flags samples assigned to more than one target, the mode
+groups samples so no cluster straddles a split, and `as_split_spec()` carries
+the assignment as a blocking annotation (`site_group`, `region_group`,
+`platform_group`, `assay_group`).
+
+### Site
 
 In multi-site studies, the collection site is a common leakage axis: a model can
 "recognize" a site rather than generalize across sites. `splitGraph` models the
@@ -627,6 +652,8 @@ head(subject_then_block_by_site$sample_data[, c("sample_id", "group_id", "site_g
 Samples assigned to more than one site are rejected rather than silently
 resolved, by both `validate_graph()` and `derive_split_constraints(mode = "site")`.
 
+### Region
+
 The `Region` relation works the same way for a categorical tissue or anatomical
 region (`region_id` column, `sample_located_in_region` edge,
 `derive_split_constraints(mode = "region")`), so samples from the same region
@@ -642,6 +669,98 @@ region_graph <- graph_from_metadata(region_meta, graph_name = "regions")
 as.data.frame(derive_split_constraints(region_graph, mode = "region"))[
   , c("sample_id", "group_id", "group_label")
 ]
+```
+
+### Platform and assay
+
+Technical measurement structure is the same story. `platform_id` (the
+sequencing instrument or measurement platform) and `assay_id` (the assay or
+modality) are both auto-detected, and `mode = "platform"` / `mode = "assay"`
+group samples so a whole platform or assay never straddles a split — useful when
+a batch effect tracks the instrument rather than the run.
+
+```{r platform-assay}
+tech_meta <- data.frame(
+  sample_id   = c("S1", "S2", "S3", "S4"),
+  platform_id = c("illumina", "illumina", "nanopore", "nanopore"),
+  assay_id    = c("rnaseq", "rnaseq", "wgs", "wgs"),
+  stringsAsFactors = FALSE
+)
+tech_graph <- graph_from_metadata(tech_meta, graph_name = "tech")
+
+as.data.frame(derive_split_constraints(tech_graph, mode = "platform"))[
+  , c("sample_id", "group_id", "group_label")
+]
+as.data.frame(derive_split_constraints(tech_graph, mode = "assay"))[
+  , c("sample_id", "group_id", "group_label")
+]
+```
+
+These new types are first-class in the typed layout too. Building a graph that
+carries several of them shows how each gets its own colour and layer band — the
+same visual vocabulary as the core types, so a mixed graph stays readable:
+
+```{r cluster-plot, fig.width = 7, fig.height = 5}
+mixed_meta <- data.frame(
+  sample_id   = c("S1", "S2", "S3", "S4"),
+  subject_id  = c("P1", "P1", "P2", "P2"),
+  site_id     = c("NYC", "NYC", "BOS", "BOS"),
+  platform_id = c("illumina", "illumina", "nanopore", "nanopore"),
+  stringsAsFactors = FALSE
+)
+plot(graph_from_metadata(mixed_meta, graph_name = "mixed_structure"))
+```
+
+### Pairwise relations: relatedness and spatial proximity
+
+Not every leakage source is a clean categorical group. Genetic relatedness and
+spatial proximity are *pairwise and continuous*: they link individual pairs by a
+similarity score. `splitGraph` models these as thresholded, undirected edges
+built with `relatedness_edges_from_kinship()` and `spatial_edges_from_coords()`,
+then `mode = "relatedness"` / `mode = "spatial"` form groups by transitive
+closure over the surviving edges — so a chain of individually near neighbours
+still lands in one group, a grouping a single column cannot express.
+
+The example below keeps subject pairs whose kinship is at least `0.1`. `P1`–`P2`
+and `P2`–`P3` clear the threshold, so those three subjects collapse into one
+group by transitive closure; the unrelated `P4` stays on its own:
+
+```{r relatedness-demo}
+kin <- data.frame(
+  id1     = c("P1", "P2", "P1"),
+  id2     = c("P2", "P3", "P4"),
+  kinship = c(0.25, 0.20, 0.02),   # P1-P4 is below the 0.1 threshold
+  stringsAsFactors = FALSE
+)
+rel_edges <- relatedness_edges_from_kinship(kin, threshold = 0.1)
+
+rel_meta <- data.frame(
+  sample_id  = paste0("S", 1:4),
+  subject_id = c("P1", "P2", "P3", "P4"),
+  stringsAsFactors = FALSE
+)
+rel_graph <- build_dependency_graph(
+  nodes = list(
+    create_nodes(rel_meta, "Sample", "sample_id"),
+    create_nodes(rel_meta, "Subject", "subject_id")
+  ),
+  edges = list(
+    create_edges(rel_meta, "sample_id", "subject_id",
+                 "Sample", "Subject", "sample_belongs_to_subject"),
+    rel_edges
+  )
+)
+
+grouping_vector(derive_split_constraints(rel_graph, mode = "relatedness"))
+```
+
+The `spatial` mode works identically over sample coordinates
+(`spatial_edges_from_coords(coords, radius)`). Both relations — with the full
+scikit-learn handoff — are covered in depth in the *modeling-structure*
+vignette:
+
+```{r modeling-pointer, eval = FALSE}
+vignette("modeling-structure", package = "splitGraph")
 ```
 
 ## Time ordering can come from precedence edges alone
@@ -735,7 +854,11 @@ evaluation workflows:
 ## Summarize the leakage picture in one object
 
 The final helper combines graph validation, constraint diagnostics, and
-split-spec readiness into one summary object.
+split-spec readiness into one summary object. Crucially, when you pass the
+`constraint` you chose, the summary reports a `severed` column: whether that
+constraint **structurally eliminates** each leakage path (`TRUE`), leaves it
+open (`FALSE`), or is not applicable (`NA`, e.g. for informational split-spec
+rows).
 
 ```{r risk-summary}
 risk_summary <- summarize_leakage_risks(
@@ -745,13 +868,18 @@ risk_summary <- summarize_leakage_risks(
 )
 
 risk_summary
-as.data.frame(risk_summary)[, c("source", "severity", "category", "message")]
+as.data.frame(risk_summary)[, c("source", "severity", "category", "severed", "message")]
 ```
 
-This is a useful stopping point before model training. It gives you one place
-to review whether the graph is structurally sound, whether the chosen
-constraint is overly singleton-heavy, and whether the downstream split spec is
-ready to use.
+Read the `severed` column against the constraint you actually chose. Here the
+strict composite constraint (`via = c("Subject", "Batch")`) severs the subject,
+cross-study, and batch-reuse risks (`TRUE`) because those samples are forced
+into the same group — but it does **not** address `missing_time_ordering` or
+`shared_featureset_provenance` (`FALSE`), which are orthogonal to a
+subject/batch grouping. That distinction is the point: the summary tells you
+which of your surfaced risks your split design has actually handled, and which
+still need attention (a different mode, a blocking variable, or a data fix) —
+so the leakage trade-off is explicit before any model is trained.
 
 ## Downstream handoff
 
@@ -778,15 +906,19 @@ any package that wants to consume a `split_spec` — for example, on top of
 
 ### Persisting the handoff
 
-If the downstream consumer is in a different R session — or in a
-different language entirely — write the spec (and, if useful, the graph)
-to JSON. The format is documented under `?write_split_spec` and
-`?write_dependency_graph`, carries a `schema_version` field, and
-preserves `NA` values as JSON `null`.
+If the downstream consumer is in a different R session — or in a different
+language entirely — write the spec (and, if useful, the graph) to JSON. The
+on-disk format has a formal JSON Schema (Draft 2020-12) shipped in
+`inst/schema/`, and each written file references it via a `$schema` key. You can
+validate a handoff file against that contract with `validate_split_spec_json()`
+before consuming it, and `NA` values round-trip as JSON `null`.
 
 ```{r serialize, eval = requireNamespace("jsonlite", quietly = TRUE)}
 spec_path <- tempfile(fileext = ".json")
 write_split_spec(split_spec, spec_path)
+
+# Validate the file against the shipped JSON Schema.
+validate_split_spec_json(spec_path)$valid
 
 # Round-trip it back into R unchanged.
 spec_round_trip <- read_split_spec(spec_path)
@@ -795,12 +927,16 @@ identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
 unlink(spec_path)
 ```
 
-For three small worked examples of consuming a `split_spec` from
-downstream code (a base-R leave-one-group-out adapter and illustrative
-`rsample` adapters), see the companion vignette:
+Because the format is a documented, versioned contract, consumers are not
+limited to R. The package ships a pure-Python reference reader (`inst/python`)
+that recovers the same grouping and ordering and drives scikit-learn resamplers;
+the *cross-language-handoff* vignette walks the full R → JSON → Python →
+scikit-learn path. For worked R adapters (a base-R leave-one-group-out adapter
+and illustrative `rsample` adapters), see the *adapter-cookbook* vignette:
 
 ```{r cookbook-pointer, eval = FALSE}
-vignette("adapter-cookbook", package = "splitGraph")
+vignette("adapter-cookbook", package = "splitGraph")       # R adapters
+vignette("cross-language-handoff", package = "splitGraph") # Python / sklearn
 ```
 
 ## Case studies

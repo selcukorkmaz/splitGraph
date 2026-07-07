@@ -52,7 +52,24 @@
       "Bash(perl -0pi -e 's/expect_s3_class\\\\\\(ls, \"LeakSplits\"\\\\\\)/expect_s4_class\\(ls, \"LeakSplits\"\\)/g' tests/testthat/test-bioleak-contract.R)",
       "Bash(NOT_CRAN=true R -q -e 'library\\(pkgload\\);load_all\\(\".\",quiet=TRUE\\);testthat::test_dir\\(\"tests/testthat\",reporter=\"summary\",stop_on_failure=FALSE\\)')",
       "Bash(R -q -e 'cat\\(sort\\(grep\\(\"^\\\\\\\\.__\", getNamespaceExports\\(\"bioLeak\"\\), value=TRUE, invert=TRUE\\)\\), sep=\"\\\\n\"\\)')",
-      "Bash(grep -vE \"^>|^\\\\+|^$\")"
+      "Bash(grep -vE \"^>|^\\\\+|^$\")",
+      "Bash(R -q -e 'suppressMessages\\(library\\(pkgload\\)\\);load_all\\(\".\",quiet=TRUE\\); print\\(head\\(formals\\(derive_split_constraints\\)$mode\\)\\)')",
+      "Bash(grep -nE \"^#{2,3} \" vignettes/leakage-aware-workflow.Rmd)",
+      "Bash(grep -cE '^```\\\\{r' vignettes/leakage-aware-workflow.Rmd)",
+      "Bash(tar tzvf *)",
+      "Bash(awk '$0 ~ /inst\\\\/doc/ {sum+=$3} END {printf \"inst/doc total: %.2f MB\\\\n\", sum/1048576}')",
+      "Bash(awk '{printf \"%.0f KB  %s\\\\n\", $3/1024, $6}')",
+      "Bash(R CMD check --as-cran splitGraph_0.3.0.tar.gz)",
+      "Bash(awk '{print $5\"  \"$9}')",
+      "Bash(grep -nE '```\\\\{python' vignettes/cross-language-handoff.Rmd)",
+      "Bash(grep -cE '^```python$' vignettes/cross-language-handoff.Rmd)",
+      "Bash(R -q -e 'cat\\(requireNamespace\\(\"reticulate\", quietly=TRUE\\),\"\\\\n\"\\)')",
+      "Bash(grep -rnE '```\\\\{python' vignettes/)",
+      "Bash(NOT_CRAN=true R -q -e ' *)",
+      "Bash(R -q -e 'suppressMessages\\(library\\(pkgload\\)\\);load_all\\(\".\",quiet=TRUE\\);testthat::test_file\\(\"tests/testthat/test-split-spec.R\",reporter=\"summary\"\\)')",
+      "Bash(NOT_CRAN=true R -q -e 'suppressMessages\\(library\\(pkgload\\)\\);load_all\\(\".\",quiet=TRUE\\);testthat::test_dir\\(\"tests/testthat\",reporter=\"summary\",stop_on_failure=FALSE\\)')",
+      "Bash(R -q -e 'ap <- tryCatch\\(available.packages\\(repos=\"https://cloud.r-project.org\"\\), error=function\\(e\\) NULL\\); if\\(is.null\\(ap\\)\\) cat\\(\"no network to check CRAN\\\\n\"\\) else cat\\(\"bioLeak on CRAN:\", \"bioLeak\" %in% rownames\\(ap\\), \"\\\\n\"\\)')",
+      "Bash(git checkout *)"
     ]
   }
 }
