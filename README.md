@@ -349,8 +349,16 @@ citation("splitGraph")
 produces:
 
 > Korkmaz S (2026). *splitGraph: Dataset Dependency Graphs for
-> Leakage-Aware Evaluation*. R package version 0.2.0.
+> Leakage-Aware Evaluation*. R package version 0.3.0.
 > <https://github.com/selcukorkmaz/splitGraph>
+
+## Contributing
+
+Contributions, bug reports, and questions are welcome. Please see
+[`CONTRIBUTING.md`](.github/CONTRIBUTING.md) for how to report issues, seek
+support, and submit pull requests, and the
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Report problems on the
+[issue tracker](https://github.com/selcukorkmaz/splitGraph/issues).
 
 ## License
 
