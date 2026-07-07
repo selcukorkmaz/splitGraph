@@ -3,6 +3,9 @@
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/selcukorkmaz/splitGraph/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/selcukorkmaz/splitGraph/actions/workflows/R-CMD-check.yaml)
 [![Codecov test coverage](https://codecov.io/gh/selcukorkmaz/splitGraph/branch/main/graph/badge.svg)](https://app.codecov.io/gh/selcukorkmaz/splitGraph?branch=main)
+[![CRAN Status](https://www.r-pkg.org/badges/version/splitGraph?color=red)](https://CRAN.R-project.org/package=splitGraph)
+[![CRAN Downloads (last month)](https://cranlogs.r-pkg.org/badges/splitGraph?color=yellow)](https://cranlogs.r-pkg.org/)
+[![CRAN Downloads (total)](https://cranlogs.r-pkg.org/badges/grand-total/splitGraph)](https://cranlogs.r-pkg.org/)
 <!-- badges: end -->
 
 `splitGraph` is an R package for representing biomedical dataset structure as a
