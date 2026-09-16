@@ -28,9 +28,20 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # Neither check-r-package nor rcmdcheck sets NOT_CRAN, so without this
+      # every skip_on_cran() test (the Python conformance check, the
+      # performance budget) would be skipped in CI too.
+      NOT_CRAN: true
+      # The performance budget has its own Linux-only workflow; skip it here so
+      # slow shared Windows/macOS runners cannot fail the check with noise.
+      SPLITGRAPH_SKIP_PERF: true
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - uses: r-lib/actions/setup-pandoc@v2
 

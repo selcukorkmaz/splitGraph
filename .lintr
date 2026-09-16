@@ -1,0 +1,14 @@
+linters: linters_with_defaults(
+    line_length_linter(160),          # signature-heavy R; 8 offenders were rewrapped, this is now a real gate
+    object_name_linter = NULL,        # `.depgraph_*` internal prefix and S3 method names
+    object_length_linter = NULL,      # the same prefix pushes internal names past 30 characters by design
+    commented_code_linter = NULL,
+    indentation_linter = NULL,        # roxygen-heavy files trip this on continuation lines
+    object_usage_linter = NULL        # false positives on data.frame column names in `[`
+  )
+exclusions: list(
+    "inst/bench",
+    "docs",
+    "tests/testthat/_snaps"
+  )
+encoding: "UTF-8"

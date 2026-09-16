@@ -12,3 +12,13 @@
 ^paper\.bib$
 ^codecov\.yml$
 ^CODE_OF_CONDUCT\.md$
+^MD5$
+^_pkgdown\.yml$
+^\.lintr$
+^dev$
+^pkgdown$
+^inst/python/__pycache__$
+^tests/testthat/Rplots\.pdf$
+^\.DS_Store$
+^.*/\.DS_Store$
+^pkgdown-site$

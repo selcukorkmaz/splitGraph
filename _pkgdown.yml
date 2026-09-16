@@ -1,0 +1,85 @@
+url: https://selcukorkmaz.github.io/splitGraph/
+
+# `docs/` already holds the v1 design blueprint, so the generated site goes to
+# its own directory (git-ignored and build-ignored); the pkgdown workflow
+# deploys that folder to the gh-pages branch.
+destination: pkgdown-site
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#4C78A8"
+
+home:
+  title: "splitGraph: dataset dependency graphs for leakage-aware evaluation"
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    intro:
+      text: Quick start
+      href: articles/quick-start.html
+    articles:
+      text: Articles
+      menu:
+        - text: Quick start
+          href: articles/quick-start.html
+        - text: From metadata to leakage-aware split design
+          href: articles/leakage-aware-workflow.html
+        - text: Modeling site, platform, relatedness, and spatial structure
+          href: articles/modeling-structure.html
+        - text: Cross-language handoff (R -> JSON -> Python)
+          href: articles/cross-language-handoff.html
+        - text: Adapter cookbook
+          href: articles/adapter-cookbook.html
+        - text: "Case study: GEO GSE60424"
+          href: articles/case-study-gse60424.html
+        - text: FAQ and design notes
+          href: articles/faq-design-notes.html
+
+reference:
+  - title: Build
+    desc: Ingest sample metadata and assemble a typed dependency graph.
+    contents:
+      - graph_from_metadata
+      - ingest_metadata
+      - create_nodes
+      - build_dependency_graph
+      - graph_node_set
+      - graph_edit
+  - title: Validate
+    desc: Structural, semantic, and leakage-relevant checks, and the conditions the package raises.
+    contents:
+      - depgraph_validation_report
+      - splitgraph_conditions
+  - title: Query
+    desc: Inspect neighbourhoods, paths, shared dependencies, and dependency components.
+    contents:
+      - query_node_type
+  - title: Derive
+    desc: Turn graph structure into deterministic split constraints.
+    contents:
+      - derive_split_constraints
+      - pairwise_edges
+  - title: Interchange
+    desc: The tool-agnostic `split_spec`, JSON serialisation, schema validation, and migration.
+    contents:
+      - as_split_spec
+      - write_split_spec
+      - write_dependency_graph
+      - validate_json
+      - migrate_json
+  - title: Visualise and export
+    contents:
+      - plot.dependency_graph
+      - export_graph
+  - title: Package
+    contents:
+      - splitGraph-package
+
+news:
+  releases:
+    - text: "Version 0.3.0"
+      href: https://github.com/selcukorkmaz/splitGraph/blob/main/NEWS.md
