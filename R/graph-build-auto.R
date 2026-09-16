@@ -24,8 +24,10 @@
 #' @param meta A \code{data.frame} containing one row per sample and optional
 #'   canonical columns: \code{sample_id} (required), \code{subject_id},
 #'   \code{batch_id}, \code{study_id}, \code{timepoint_id}, \code{time_index},
-#'   \code{assay_id}, \code{featureset_id}, \code{outcome_id}, or
-#'   \code{outcome_value}.
+#'   \code{assay_id}, \code{featureset_id}, \code{site_id}, \code{region_id},
+#'   \code{platform_id}, \code{outcome_id}, or \code{outcome_value}.
+#'   Identifier columns may be character, factor, or numeric; they are
+#'   coerced to character by \code{ingest_metadata()}.
 #' @param columns Optional named character vector passed to
 #'   \code{ingest_metadata()} to rename user columns to canonical names.
 #' @param dataset_name,graph_name Optional metadata labels.
@@ -36,7 +38,20 @@
 #'   \code{time_index}.
 #' @param validate Forwarded to \code{build_dependency_graph()}.
 #' @param validation_overrides Forwarded to \code{build_dependency_graph()}.
+#' @param ... Passed on to the \code{data.frame} method.
+#' @param sample_id_col For the \code{SummarizedExperiment} method: the
+#'   \code{colData} column holding sample identifiers. When \code{NULL}
+#'   (default) a \code{sample_id} column is used if present, otherwise the
+#'   assay column names (\code{colnames(se)}) become the sample identifiers.
 #' @return A validated \code{dependency_graph}.
+#' @details
+#' \code{graph_from_metadata()} is an S3 generic. The \code{data.frame} method
+#' is the one described above. The \code{SummarizedExperiment} method (used
+#' when Bioconductor's \pkg{SummarizedExperiment} is installed) converts
+#' \code{colData(se)} to a data frame, adds \code{sample_id} from the assay
+#' column names when \code{colData} has no such column, and dispatches to the
+#' \code{data.frame} method; \code{columns} maps \code{colData} names to the
+#' canonical ones exactly as for a data frame.
 #' @examples
 #' meta <- data.frame(
 #'   sample_id  = c("S1", "S2", "S3", "S4"),
@@ -49,17 +64,75 @@
 #'
 #' g <- graph_from_metadata(meta, graph_name = "demo")
 #' g
+#'
+#' if (requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+#'   se <- SummarizedExperiment::SummarizedExperiment(
+#'     assays = list(counts = matrix(0, nrow = 3, ncol = 4,
+#'                                   dimnames = list(NULL, meta$sample_id))),
+#'     colData = meta[, c("subject_id", "batch_id")]
+#'   )
+#'   g_se <- graph_from_metadata(se, graph_name = "from-se")
+#'   identical(grouping_vector(derive_split_constraints(g_se, "subject")),
+#'             grouping_vector(derive_split_constraints(g, "subject")))
+#' }
 #' @export
-graph_from_metadata <- function(meta,
-                                columns = NULL,
-                                dataset_name = NULL,
-                                graph_name = NULL,
-                                outcome_scope = c("sample", "subject"),
-                                time_precedence = TRUE,
-                                validate = TRUE,
-                                validation_overrides = list()) {
+graph_from_metadata <- function(meta, ...) {
+  UseMethod("graph_from_metadata")
+}
+
+#' @rdname graph_from_metadata
+#' @export
+graph_from_metadata.default <- function(meta, ...) {
+  .depgraph_stop(
+    paste0(
+      "`meta` must be a data.frame or a SummarizedExperiment; got <",
+      paste(class(meta), collapse = "/"), ">."
+    ),
+    class = "splitgraph_schema_error", code = "unsupported_metadata_input"
+  )
+}
+
+#' @rdname graph_from_metadata
+#' @export
+graph_from_metadata.SummarizedExperiment <- function(meta, ..., sample_id_col = NULL) {
+  .depgraph_assert(
+    requireNamespace("SummarizedExperiment", quietly = TRUE),
+    "Package 'SummarizedExperiment' is required to build a graph from a SummarizedExperiment."
+  )
+  col_data <- as.data.frame(SummarizedExperiment::colData(meta), stringsAsFactors = FALSE, optional = TRUE)
+  sample_names <- colnames(meta)
+
+  if (!is.null(sample_id_col)) {
+    .depgraph_assert(
+      sample_id_col %in% names(col_data),
+      paste0("`sample_id_col` not found in colData: ", sample_id_col),
+      class = "splitgraph_reference_error", code = "missing_sample_id_column"
+    )
+    col_data$sample_id <- as.character(col_data[[sample_id_col]])
+  } else if (!"sample_id" %in% names(col_data)) {
+    .depgraph_assert(
+      !is.null(sample_names) && all(nzchar(sample_names)),
+      "The SummarizedExperiment has no `sample_id` column in colData and no column names to use instead."
+    )
+    col_data$sample_id <- as.character(sample_names)
+  }
+  row.names(col_data) <- NULL
+  graph_from_metadata.data.frame(col_data, ...)
+}
+
+#' @rdname graph_from_metadata
+#' @export
+graph_from_metadata.data.frame <- function(meta,
+                                           columns = NULL,
+                                           dataset_name = NULL,
+                                           graph_name = NULL,
+                                           outcome_scope = c("sample", "subject"),
+                                           time_precedence = TRUE,
+                                           validate = TRUE,
+                                           validation_overrides = list(),
+                                           ...) {
   .depgraph_assert(is.data.frame(meta), "`meta` must be a data.frame.")
-  outcome_scope <- match.arg(outcome_scope)
+  outcome_scope <- .depgraph_match_arg(outcome_scope, c("sample", "subject"), "outcome_scope")
 
   meta <- ingest_metadata(meta, col_map = columns, dataset_name = dataset_name, strict = TRUE)
 
@@ -119,12 +192,12 @@ graph_from_metadata <- function(meta,
     if (any(present)) {
       sub <- meta[present, , drop = FALSE]
       if (identical(outcome_col, "outcome_value") && is.numeric(meta[[outcome_col]])) {
-        warning(
-          "`outcome_value` is numeric: graph_from_metadata() will create one ",
-          "Outcome node per distinct numeric value (e.g. `outcome:0`, `outcome:1`). ",
-          "If you intended a class label, pass `outcome_id` (character) instead, ",
-          "or coerce `outcome_value` to a character class label first.",
-          call. = FALSE
+        .depgraph_warn(
+          c("`outcome_value` is numeric: graph_from_metadata() will create one ",
+            "Outcome node per distinct numeric value (e.g. `outcome:0`, `outcome:1`). ",
+            "If you intended a class label, pass `outcome_id` (character) instead, ",
+            "or coerce `outcome_value` to a character class label first."),
+          code = "numeric_outcome_value"
         )
       }
       sub$outcome_id <- as.character(sub[[outcome_col]])

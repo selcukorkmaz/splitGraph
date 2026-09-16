@@ -7,7 +7,7 @@
 \usage{
 write_split_spec(spec, path, pretty = TRUE)
 
-read_split_spec(path)
+read_split_spec(path, validate = FALSE)
 }
 \arguments{
 \item{spec}{A \code{split_spec} produced by \code{as_split_spec()}.}
@@ -15,6 +15,11 @@ read_split_spec(path)
 \item{path}{Path to write to or read from.}
 
 \item{pretty}{If \code{TRUE} (default), the JSON is indented.}
+
+\item{validate}{If \code{TRUE}, check the file against the shipped schema
+before parsing and run \code{validate_split_spec()} on the result, failing
+with a classed error on any violation or error-severity issue. Defaults to
+\code{FALSE}.}
 }
 \value{
 \code{write_split_spec()} invisibly returns \code{path}.
@@ -37,23 +42,29 @@ read back as \code{NA}.
 
 \preformatted{
 {
-  "$schema": "https://.../inst/schema/split_spec.schema.json",
+  "$schema": "https://.../inst/schema/0.3.0/split_spec.schema.json",
   "splitGraph_object": "split_spec",
-  "schema_version": "0.2.0",
+  "schema_version": "0.3.0",
   "group_var": "group_id",
   "block_vars": ["batch_group", "study_group"],
   "time_var": "order_rank",
+  "stratum_var": "stratum",
   "ordering_required": false,
   "constraint_mode": "subject",
   "constraint_strategy": "subject",
   "recommended_resampling": "grouped_cv",
-  "metadata": { ... },
+  "metadata": { "relations_used": [...], "via": [...], "priority": [...],
+                "threshold": null, "warnings": [...], ... },
   "sample_data": [
-    { "sample_id": "S1", "group_id": "subject:P1", ... },
+    { "sample_id": "S1", "group_id": "subject:P1", "stratum": "case", ... },
     ...
   ]
 }
 }
+Vector-valued metadata fields are always written as arrays, even with a
+single element. \code{stratum_var} and the \code{stratum} column were added
+in schema 0.3.0; files written by earlier versions load with \code{stratum}
+filled as \code{NA}.
 }
 
 \examples{

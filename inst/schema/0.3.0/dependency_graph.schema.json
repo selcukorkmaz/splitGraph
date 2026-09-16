@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/dependency_graph.schema.json",
+  "$id": "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/0.3.0/dependency_graph.schema.json",
   "title": "splitGraph dependency_graph",
-  "description": "On-disk JSON format written by splitGraph::write_dependency_graph(). A typed dependency graph describing biomedical dataset structure.",
+  "description": "On-disk JSON format written by splitGraph::write_dependency_graph(). A typed dependency graph describing biomedical dataset structure. Schema version 0.3.0 (package 0.4.0): adds metadata.edge_sources. Additive over 0.2.0.",
   "type": "object",
   "required": ["splitGraph_object", "schema_version", "nodes", "edges"],
   "properties": {
@@ -16,7 +16,21 @@
         "dataset_name": { "type": ["string", "null"] },
         "created_at": { "type": ["string", "null"] },
         "schema_version": { "type": "string" },
-        "validation_overrides": { "type": "object" }
+        "validation_overrides": { "type": "object" },
+        "edge_sources": {
+          "type": "object",
+          "description": "Provenance of each edge set that went into the graph, keyed by relation (edge_type). Records the source columns and, for thresholded pairwise relations, the threshold that was applied when the edges were built (kinship minimum for subject_related_to, distance maximum for sample_adjacent_to).",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "relation": { "type": "string" },
+              "from_col": { "type": ["string", "null"] },
+              "to_col": { "type": ["string", "null"] },
+              "threshold": { "type": ["number", "null"] },
+              "metric": { "type": ["string", "null"] }
+            }
+          }
+        }
       }
     },
     "nodes": {

@@ -2,22 +2,11 @@
 % Please edit documentation in R/graph-build.R, R/validate.R
 \name{build_dependency_graph}
 \alias{build_dependency_graph}
-\alias{build_depgraph}
 \alias{as_igraph}
 \alias{validate_graph}
-\alias{validate_depgraph}
 \title{Assemble and Validate Dependency Graphs}
 \usage{
 build_dependency_graph(
-  nodes,
-  edges,
-  graph_name = NULL,
-  dataset_name = NULL,
-  validate = TRUE,
-  validation_overrides = list()
-)
-
-build_depgraph(
   nodes,
   edges,
   graph_name = NULL,
@@ -30,16 +19,6 @@ as_igraph(x)
 
 validate_graph(
   graph,
-  checks = c("ids", "references", "cardinality", "schema", "time"),
-  error_on_fail = FALSE,
-  levels = NULL,
-  severities = NULL,
-  validation_overrides = NULL
-)
-
-validate_depgraph(
-  graph,
-  checks = c("ids", "references", "cardinality", "schema", "time"),
   error_on_fail = FALSE,
   levels = NULL,
   severities = NULL,
@@ -63,16 +42,13 @@ exceptions. Currently supported keys:
     first listed subject assignment (recording the ambiguity in
     \code{metadata$warnings}). Defaults to \code{FALSE}.}
 }
-When passed to \code{validate_graph()} or \code{validate_depgraph()},
-the override is merged into the graph's existing
-\code{validation_overrides} for the duration of the call only.}
+When passed to \code{validate_graph()}, the override is merged into the
+graph's existing \code{validation_overrides} for the duration of the call
+only.}
 
 \item{x}{A \code{dependency_graph}.}
 
 \item{graph}{A \code{dependency_graph}.}
-
-\item{checks}{\strong{Deprecated.} Use \code{levels} and \code{severities}
-instead. Retained for backward compatibility with 0.1.0 callers.}
 
 \item{error_on_fail}{If \code{TRUE}, stop when validation errors are found
 across all detected issues from the selected validation levels, even if
@@ -86,9 +62,8 @@ considered valid.}
 }
 \value{
 For \code{build_dependency_graph()}, a \code{dependency_graph}. For
-  \code{validate_graph()} and \code{validate_depgraph()}, a
-  \code{depgraph_validation_report}. For \code{as_igraph()}, the underlying
-  \code{igraph} object.
+  \code{validate_graph()}, a \code{depgraph_validation_report}. For
+  \code{as_igraph()}, the underlying \code{igraph} object.
 }
 \description{
 Combine canonical node and edge tables into a typed dependency graph and

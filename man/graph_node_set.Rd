@@ -4,11 +4,7 @@
 \alias{graph_node_set}
 \alias{graph_edge_set}
 \alias{dependency_graph}
-\alias{new_depgraph_nodes}
-\alias{new_depgraph_edges}
-\alias{new_depgraph}
 \alias{graph_query_result}
-\alias{dependency_constraint}
 \alias{split_constraint}
 \title{Construct Core splitGraph S3 Objects}
 \usage{
@@ -26,34 +22,12 @@ graph_edge_set(
 
 dependency_graph(nodes, edges, graph, metadata = list(), caches = list())
 
-new_depgraph_nodes(
-  data = NULL,
-  schema_version = .depgraph_schema_version,
-  source = list()
-)
-
-new_depgraph_edges(
-  data = NULL,
-  schema_version = .depgraph_schema_version,
-  source = list()
-)
-
-new_depgraph(nodes, edges, graph = NULL, metadata = list(), caches = list())
-
 graph_query_result(
   query = "",
   params = list(),
   nodes = NULL,
   edges = NULL,
   table = NULL,
-  metadata = list()
-)
-
-dependency_constraint(
-  constraint_id,
-  relation_types,
-  sample_map,
-  transitive = TRUE,
   metadata = list()
 )
 
@@ -82,12 +56,9 @@ auxiliary metadata.}
 
 \item{table}{Tabular query result payload.}
 
-\item{constraint_id, relation_types, transitive}{Fields describing a
-dependency constraint.}
+\item{strategy}{Split strategy identifier.}
 
 \item{sample_map}{Sample-level mapping table for constraints.}
-
-\item{strategy}{Split strategy identifier.}
 }
 \value{
 An S3 object corresponding to the constructor that was called.

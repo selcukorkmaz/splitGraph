@@ -55,9 +55,14 @@
 # contract with shipped JSON Schemas (`inst/schema/`), a `$schema` reference in
 # output, split_spec provenance (`splitgraph_version`, `derived_at`), and the
 # node/edge/column additions from the 0.3.0 development cycle (Site, Region,
-# Platform, the pairwise relations, and their split_spec annotations). All of
-# those are additive within MAJOR 0, so "0.1.0" files still load silently.
-.depgraph_schema_version <- "0.2.0"
+# Platform, the pairwise relations, and their split_spec annotations). "0.3.0"
+# (package 0.4.0) adds the `stratum` column and `stratum_var` to split_spec,
+# `edge_sources` (thresholds and column provenance) to graph metadata, richer
+# split_spec provenance (`via`, `priority`, `threshold`, `igraph_version`,
+# `enrichment_warnings`), and moves the shipped schemas under a versioned
+# directory (`inst/schema/<version>/`). All of those are additive within
+# MAJOR 0, so "0.1.0" and "0.2.0" files still load silently.
+.depgraph_schema_version <- "0.3.0"
 
 .depgraph_node_types <- c(
   "Sample", "Subject", "Batch", "Study",
@@ -312,10 +317,100 @@
   rep(list(list()), n)
 }
 
-.depgraph_assert <- function(condition, message) {
+#' Classed Conditions Signalled by splitGraph
+#'
+#' Every error raised by \pkg{splitGraph} is a classed condition that inherits
+#' from \code{"splitgraph_error"} (and \code{"error"}), so callers can handle
+#' the package's failures selectively with \code{tryCatch()} without matching
+#' on message text. Each condition also carries a machine-readable \code{code}
+#' field drawn from the same vocabulary as the \code{code} column of a
+#' \code{depgraph_validation_report} where one applies (for example
+#' \code{"missing_source_node"} or \code{"sample_multiple_batch_assignments"}),
+#' and \code{NA} otherwise.
+#'
+#' @section Condition classes:
+#' \describe{
+#'   \item{\code{splitgraph_error}}{Base class of every splitGraph error,
+#'     including argument checks that do not fall in a category below.}
+#'   \item{\code{splitgraph_schema_error}}{The input violates the typed schema:
+#'     an unsupported node or edge type, an edge whose endpoints have the wrong
+#'     node types, a graph with no \code{Sample} node, or a JSON document that
+#'     is not the expected splitGraph object.}
+#'   \item{\code{splitgraph_reference_error}}{An identifier does not resolve or
+#'     is not unique: edge endpoints missing from the node table, duplicated
+#'     node or edge ids, unknown node or sample ids passed to a query, or a
+#'     missing edge endpoint value.}
+#'   \item{\code{splitgraph_ambiguity_error}}{The structure admits more than
+#'     one answer where exactly one is required: conflicting definitions for
+#'     the same node or edge, or a sample linked to several targets of a
+#'     single-valued relation when deriving a direct constraint.}
+#'   \item{\code{splitgraph_validation_error}}{\code{validate_graph(error_on_fail
+#'     = TRUE)} or \code{build_dependency_graph(validate = TRUE)} found
+#'     error-severity issues, or timepoint ordering metadata are inconsistent.}
+#'   \item{\code{splitgraph_io_error}}{A file could not be written or parsed.}
+#' }
+#' Warnings raised by the package carry the class \code{"splitgraph_warning"}.
+#'
+#' @examples
+#' meta <- data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2"))
+#' g <- graph_from_metadata(meta)
+#' res <- tryCatch(
+#'   query_neighbors(g, "sample:does-not-exist"),
+#'   splitgraph_reference_error = function(e) e$code
+#' )
+#' res
+#' @name splitgraph_conditions
+NULL
+
+.depgraph_condition_classes <- function(class) {
+  unique(c(class, "splitgraph_error"))
+}
+
+# Signal a classed splitGraph error. `class` may name one of the documented
+# subclasses (see ?splitgraph_conditions); `code` is the machine-readable code
+# shared with the validation-report vocabulary where one applies.
+.depgraph_stop <- function(message, class = "splitgraph_error", code = NA_character_) {
+  cond <- structure(
+    class = c(.depgraph_condition_classes(class), "error", "condition"),
+    list(message = paste0(message, collapse = ""), call = NULL, code = as.character(code)[1L])
+  )
+  stop(cond)
+}
+
+.depgraph_warn <- function(message, class = "splitgraph_warning", code = NA_character_) {
+  cond <- structure(
+    class = c(unique(c(class, "splitgraph_warning")), "warning", "condition"),
+    list(message = paste0(message, collapse = ""), call = NULL, code = as.character(code)[1L])
+  )
+  warning(cond)
+}
+
+.depgraph_assert <- function(condition, message, class = "splitgraph_error", code = NA_character_) {
   if (!isTRUE(condition)) {
-    stop(message, call. = FALSE)
+    .depgraph_stop(message, class = class, code = code)
   }
+}
+
+# `match.arg()` with a classed error, so an invalid `mode =` / `format =` is a
+# `splitgraph_error` like every other failure the package raises. `arg` may be
+# the full default vector (as with match.arg()), in which case the first
+# choice is returned.
+.depgraph_match_arg <- function(arg, choices, name) {
+  if (identical(arg, choices)) {
+    return(choices[[1L]])
+  }
+  .depgraph_assert(
+    is.character(arg) && length(arg) == 1L && !is.na(arg),
+    paste0("`", name, "` must be a single string; one of: ", paste(choices, collapse = ", "), "."),
+    code = "invalid_argument"
+  )
+  hit <- pmatch(arg, choices, nomatch = 0L, duplicates.ok = FALSE)
+  .depgraph_assert(
+    hit > 0L,
+    paste0("`", name, "` must be one of: ", paste(choices, collapse = ", "), " (got \"", arg, "\")."),
+    code = "invalid_argument"
+  )
+  choices[[hit]]
 }
 
 # Installed splitGraph package version as a string, for stamping provenance.
@@ -327,7 +422,10 @@
 .depgraph_match_node_type <- function(type) {
   .depgraph_assert(length(type) == 1L && !is.na(type), "`type` must be length 1.")
   match_idx <- match(tolower(type), tolower(.depgraph_node_types))
-  .depgraph_assert(!is.na(match_idx), paste0("Unsupported node type: ", type))
+  .depgraph_assert(
+    !is.na(match_idx), paste0("Unsupported node type: ", type),
+    class = "splitgraph_schema_error", code = "unsupported_node_type"
+  )
   .depgraph_node_types[[match_idx]]
 }
 
@@ -389,18 +487,25 @@
     paste0("Missing attribute columns: ", paste(missing_cols, collapse = ", "))
   )
 
-  attrs <- lapply(seq_len(nrow(data)), function(i) {
-    as.list(data[i, attr_cols, drop = FALSE])
-  })
+  # One named list per row, built column-wise: identical to
+  # `as.list(data[i, attr_cols, drop = FALSE])` for each row, without the
+  # per-row data.frame subsetting that dominated large builds.
+  columns <- lapply(data[attr_cols], as.list)
+  attrs <- do.call(Map, c(list(f = function(...) list(...)), columns))
+  names(attrs) <- NULL
   I(attrs)
 }
 
 .depgraph_validate_node_attrs <- function(node_type, attrs) {
   schema <- .depgraph_node_type_schema(node_type)
   attr_names <- names(attrs)
+  if (is.null(attr_names)) attr_names <- character()
+  allowed <- c(schema$required_attrs, schema$optional_attrs)
 
-  missing_required <- setdiff(schema$required_attrs, attr_names)
-  unknown_attrs <- setdiff(attr_names, c(schema$required_attrs, schema$optional_attrs))
+  # `%in%` instead of setdiff(): same result for these character vectors,
+  # without setdiff()'s per-call coercion overhead (this runs once per node).
+  missing_required <- schema$required_attrs[!schema$required_attrs %in% attr_names]
+  unknown_attrs <- unique(attr_names[!attr_names %in% allowed])
 
   list(
     missing_required = missing_required,
@@ -453,15 +558,14 @@
     ))
   }
 
-  graph_edges <- graph_edges[, required_edge_cols, drop = FALSE]
-  table_edges <- edge_data[, required_edge_cols, drop = FALSE]
-
-  graph_edges <- graph_edges[do.call(order, unname(graph_edges)), , drop = FALSE]
-  table_edges <- table_edges[do.call(order, unname(table_edges)), , drop = FALSE]
-  row.names(graph_edges) <- NULL
-  row.names(table_edges) <- NULL
-
-  if (!identical(graph_edges, table_edges)) {
+  # Compare the two edge tables as multisets of composite keys. A radix sort of
+  # one character vector is far cheaper than ordering four string columns with
+  # locale collation, and the result is the same: equal iff every
+  # (from, to, edge_id, edge_type) tuple occurs equally often on both sides.
+  graph_keys <- do.call(paste, c(unname(as.list(graph_edges[, required_edge_cols, drop = FALSE])), sep = "\r"))
+  table_keys <- do.call(paste, c(unname(as.list(edge_data[, required_edge_cols, drop = FALSE])), sep = "\r"))
+  if (length(graph_keys) != length(table_keys) ||
+      !identical(sort(graph_keys, method = "radix"), sort(table_keys, method = "radix"))) {
     return(list(
       valid = FALSE,
       message = "The embedded `igraph` does not match the supplied node and edge tables."
@@ -495,7 +599,7 @@
   data$node_type <- as.character(data$node_type)
   data$node_key <- as.character(data$node_key)
   data$label <- as.character(data$label)
-  data$attrs <- I(lapply(data$attrs, .depgraph_normalize_attr_entry, context = "`attrs`"))
+  data$attrs <- .depgraph_normalize_attr_column(data$attrs)
 
   .depgraph_assert(
     all(!is.na(data$node_id) & nzchar(data$node_id)),
@@ -540,7 +644,7 @@
   data$from <- as.character(data$from)
   data$to <- as.character(data$to)
   data$edge_type <- as.character(data$edge_type)
-  data$attrs <- I(lapply(data$attrs, .depgraph_normalize_attr_entry, context = "`attrs`"))
+  data$attrs <- .depgraph_normalize_attr_column(data$attrs)
 
   .depgraph_assert(
     all(!is.na(data$edge_id) & nzchar(data$edge_id)),
@@ -569,6 +673,28 @@
     n = as.integer(counts),
     stringsAsFactors = FALSE,
     row.names = NULL
+  )
+}
+
+# Normalise a list-column of attribute entries. Fast path: when every entry is
+# already an empty list (the common case for nodes built from an id column
+# alone) there is nothing to check or convert.
+.depgraph_normalize_attr_column <- function(attrs, context = "`attrs`") {
+  if (length(attrs) == 0L || all(lengths(attrs) == 0L)) {
+    return(I(rep(list(list()), length(attrs))))
+  }
+  I(lapply(attrs, .depgraph_normalize_attr_entry, context = context))
+}
+
+# Number of distinct `values` per level of `by`, as a data.frame(by, n) ordered
+# by `by` (the same order `stats::aggregate()` produced, without its factor
+# machinery on every call).
+.depgraph_count_unique_by <- function(values, by) {
+  groups <- split(values, by)
+  data.frame(
+    by = names(groups),
+    n = unname(lengths(lapply(groups, unique))),
+    stringsAsFactors = FALSE
   )
 }
 

@@ -49,3 +49,39 @@ test_that("graph_from_metadata supports subject-scope outcome", {
   expect_true("subject_has_outcome" %in% edge_types)
   expect_false("sample_has_outcome" %in% edge_types)
 })
+
+test_that("graph_from_metadata accepts factor and numeric site/region/platform ids", {
+  meta <- data.frame(
+    sample_id   = c("S1", "S2", "S3"),
+    subject_id  = c("P1", "P2", "P3"),
+    site_id     = factor(c("A", "B", "A")),
+    region_id   = factor(c("cortex", "cortex", "liver")),
+    platform_id = c(1, 2, 1),
+    stringsAsFactors = FALSE
+  )
+
+  ingested <- ingest_metadata(meta)
+  expect_type(ingested$site_id, "character")
+  expect_type(ingested$region_id, "character")
+  expect_type(ingested$platform_id, "character")
+
+  g <- graph_from_metadata(meta)
+  expect_s3_class(g, "dependency_graph")
+  expect_setequal(
+    g$nodes$data$node_key[g$nodes$data$node_type == "Site"],
+    c("A", "B")
+  )
+  expect_setequal(
+    g$nodes$data$node_key[g$nodes$data$node_type == "Platform"],
+    c("1", "2")
+  )
+  expect_identical(
+    unname(grouping_vector(derive_split_constraints(g, mode = "site"))),
+    c("site:A", "site:B", "site:A")
+  )
+})
+
+test_that("create_nodes accepts a factor identifier column directly", {
+  nodes <- create_nodes(data.frame(site_id = factor(c("A", "B", "A"))), "Site", "site_id")
+  expect_identical(nodes$data$node_key, c("A", "B"))
+})

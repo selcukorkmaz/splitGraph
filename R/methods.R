@@ -141,23 +141,106 @@ summary.dependency_graph <- function(object, ...) {
   unname(colors)
 }
 
+# The igraph object to draw for a given focus. "full" is the typed graph;
+# "sample_projection" is the undirected sample graph whose edges join samples
+# that share a dependency target (via `detect_dependency_components()`); "ego"
+# is the neighbourhood of one node.
+.depgraph_plot_graph <- function(x, focus, node = NULL, via = NULL, order = 1L) {
+  if (identical(focus, "full")) {
+    return(x$graph)
+  }
+
+  if (identical(focus, "ego")) {
+    .depgraph_assert(!is.null(node), "`node` is required when `focus = \"ego\"`.")
+    node_id <- .depgraph_resolve_node_ids(x, node)[[1L]]
+    return(igraph::make_ego_graph(x$graph, order = order, nodes = node_id, mode = "all")[[1L]])
+  }
+
+  via <- via %||% c("Subject", "Batch", "Study", "Timepoint")
+  components <- detect_dependency_components(x, via = via, min_size = 1)
+  projection <- components$metadata$projection_edges
+  samples <- x$nodes$data[x$nodes$data$node_type == "Sample", , drop = FALSE]
+  edges <- if (nrow(projection) == 0L) {
+    data.frame(from = character(), to = character(), stringsAsFactors = FALSE)
+  } else {
+    data.frame(from = projection$sample_node_id_1, to = projection$sample_node_id_2, stringsAsFactors = FALSE)
+  }
+  igraph::graph_from_data_frame(
+    d = edges,
+    vertices = data.frame(
+      name = samples$node_id,
+      node_type = "Sample",
+      node_key = samples$node_key,
+      label = samples$label,
+      stringsAsFactors = FALSE
+    ),
+    directed = FALSE
+  )
+}
+
+#' Plot a Dependency Graph
+#'
+#' Draw a \code{dependency_graph} with node colours by type and, by default, a
+#' layered layout that places samples on the bottom row and their dependency
+#' targets above them.
+#'
+#' @param x A \code{dependency_graph}.
+#' @param layout \code{"typed"} (one row per node-type layer),
+#'   \code{"sugiyama"} (igraph's layered layout), \code{"auto"} (igraph's
+#'   default), a layout matrix, or a function of the igraph object returning
+#'   one. For \code{focus = "sample_projection"} the typed layout is replaced by
+#'   a force-directed one, since every node is a sample.
+#' @param focus What to draw. \code{"full"} (default) draws the typed graph.
+#'   \code{"sample_projection"} draws only the \code{Sample} nodes, joined when
+#'   they share a dependency target of a type in \code{via}: the picture of the
+#'   grouping that \code{derive_split_constraints(mode = "composite")} would
+#'   produce. \code{"ego"} draws the neighbourhood of \code{node} up to
+#'   \code{order} steps in either direction.
+#' @param node For \code{focus = "ego"}: the node id (e.g. \code{"sample:S1"})
+#'   at the centre of the neighbourhood.
+#' @param via For \code{focus = "sample_projection"}: dependency node types
+#'   that link samples. Defaults to Subject, Batch, Study, Timepoint.
+#' @param order For \code{focus = "ego"}: neighbourhood radius in edges.
+#' @param node_colors Optional named vector overriding the type palette.
+#' @param show_labels Draw node labels.
+#' @param legend,legend_position Draw a node-type legend and where.
+#' @param ... Further arguments passed to \code{igraph}'s plot method.
+#' @return \code{x}, invisibly. Called for the plot.
+#' @examples
+#' meta <- data.frame(
+#'   sample_id = c("S1", "S2", "S3"), subject_id = c("P1", "P1", "P2"),
+#'   batch_id = c("B1", "B2", "B1")
+#' )
+#' g <- graph_from_metadata(meta)
+#' plot(g)
+#' plot(g, focus = "sample_projection", via = "Subject")
+#' plot(g, focus = "ego", node = "subject:P1")
 #' @export
 plot.dependency_graph <- function(x,
                                   layout = c("typed", "sugiyama", "auto"),
+                                  focus = c("full", "sample_projection", "ego"),
+                                  node = NULL,
+                                  via = NULL,
+                                  order = 1L,
                                   node_colors = NULL,
                                   show_labels = TRUE,
                                   legend = TRUE,
                                   legend_position = "topleft",
                                   ...) {
-  layout_choice <- if (is.character(layout)) match.arg(layout) else layout
-  g <- x$graph
+  layout_choice <- if (is.character(layout)) .depgraph_match_arg(layout, c("typed", "sugiyama", "auto"), "layout") else layout
+  focus <- .depgraph_match_arg(focus, c("full", "sample_projection", "ego"), "focus")
+  g <- .depgraph_plot_graph(x, focus, node = node, via = via, order = order)
 
   user_args <- list(...)
   plot_args <- list(x = g)
 
   if (is.character(layout_choice)) {
     if (identical(layout_choice, "typed")) {
-      plot_args$layout <- .depgraph_typed_layout(g)
+      plot_args$layout <- if (identical(focus, "sample_projection")) {
+        igraph::layout_with_fr(g)
+      } else {
+        .depgraph_typed_layout(g)
+      }
     } else if (identical(layout_choice, "sugiyama")) {
       plot_args$layout <- igraph::layout_with_sugiyama(g)$layout
     }
@@ -239,31 +322,6 @@ as.data.frame.graph_query_result <- function(x, row.names = NULL, optional = FAL
 }
 
 #' @export
-print.dependency_constraint <- function(x, ...) {
-  cat("<dependency_constraint>", x$constraint_id, "\n")
-  cat("  Samples:", nrow(x$sample_map), "\n")
-  invisible(x)
-}
-
-#' @export
-summary.dependency_constraint <- function(object, ...) {
-  group_col <- intersect(c("group_id", "split_unit", "block_id"), names(object$sample_map))
-  n_groups <- if (length(group_col) == 0L) NA_integer_ else length(unique(object$sample_map[[group_col[[1L]]]]))
-  list(
-    constraint_id = object$constraint_id,
-    relation_types = object$relation_types,
-    n_samples = nrow(object$sample_map),
-    n_groups = n_groups,
-    transitive = object$transitive
-  )
-}
-
-#' @export
-as.data.frame.dependency_constraint <- function(x, row.names = NULL, optional = FALSE, ...) {
-  x$sample_map
-}
-
-#' @export
 print.split_constraint <- function(x, ...) {
   cat("<split_constraint>", x$strategy, "\n")
   cat("  Samples:", nrow(x$sample_map), "\n")
@@ -332,6 +390,15 @@ print.split_spec <- function(x, ...) {
   cat("<split_spec>", x$constraint_mode %||% "<unknown>", "\n")
   cat("  Samples:", nrow(x$sample_data), "\n")
   cat("  Groups:", length(unique(x$sample_data[[x$group_var]])), "\n")
+  if (length(x$block_vars) > 0L) {
+    cat("  Block vars:", paste(x$block_vars, collapse = ", "), "\n")
+  }
+  if (!is.null(x$time_var)) {
+    cat("  Time var:", x$time_var, if (isTRUE(x$ordering_required)) "(ordering required)" else "", "\n")
+  }
+  if (!is.null(x$stratum_var)) {
+    cat("  Stratum var:", x$stratum_var, "\n")
+  }
   if (!is.null(x$recommended_resampling)) {
     cat("  Recommended resampling:", x$recommended_resampling, "\n")
   }
@@ -347,6 +414,7 @@ summary.split_spec <- function(object, ...) {
     n_groups = length(unique(object$sample_data[[object$group_var]])),
     block_vars = object$block_vars,
     time_var = object$time_var,
+    stratum_var = object$stratum_var,
     ordering_required = object$ordering_required,
     recommended_resampling = object$recommended_resampling
   )
@@ -398,6 +466,10 @@ as.data.frame.leakage_risk_summary <- function(x, row.names = NULL, optional = F
   x$diagnostics
 }
 
+# NOTE: this is deliberately NOT base R's `%||%` (R >= 4.4), which only tests
+# for NULL. splitGraph's variant also treats a zero-length vector and a single
+# NA as "missing", because JSON round-trips turn absent fields into NA and
+# metadata fields into empty vectors. Do not "simplify" it to the base version.
 `%||%` <- function(x, y) {
   if (is.null(x) || length(x) == 0L || (length(x) == 1L && is.na(x))) {
     return(y)

@@ -41,6 +41,8 @@ class SplitSpec:
         self.group_var = data.get("group_var", "group_id")
         self.block_vars = list(data.get("block_vars") or [])
         self.time_var = data.get("time_var")
+        # Added in schema 0.3.0; older files simply have no stratum annotation.
+        self.stratum_var = data.get("stratum_var")
         self.ordering_required = bool(data.get("ordering_required"))
         self.constraint_mode = data.get("constraint_mode")
         self.constraint_strategy = data.get("constraint_strategy")
@@ -70,8 +72,17 @@ class SplitSpec:
         """
         return [row.get("order_rank") for row in self.sample_data]
 
-    def strata(self, column):
-        """Stratum annotation from ``column`` (e.g. a block variable)."""
+    def strata(self, column=None):
+        """Stratum annotation per sample, in file order.
+
+        ``column`` defaults to the spec's ``stratum_var`` (the outcome level
+        each sample carries, added in schema 0.3.0); pass any other column
+        name, e.g. a block variable, to stratify on that instead. Returns a
+        list of ``None`` when neither is available.
+        """
+        column = column or self.stratum_var
+        if column is None:
+            return [None] * len(self.sample_data)
         return [row.get(column) for row in self.sample_data]
 
     def grouping(self):
@@ -112,6 +123,27 @@ class SplitSpec:
         n = len(self.sample_data)
         X = np.zeros((n, 1))
         return GroupKFold(n_splits=n_splits).split(X, groups=self.groups())
+
+    def stratified_group_kfold(self, n_splits=5, column=None, **kwargs):
+        """Yield ``(train_idx, test_idx)`` from ``sklearn.StratifiedGroupKFold``.
+
+        Keyed on the grouping vector and stratified on :meth:`strata`
+        (``stratum_var`` by default). Raises ``ValueError`` when the spec has
+        no stratum annotation for some sample. Needs scikit-learn and numpy.
+        """
+        import numpy as np
+        from sklearn.model_selection import StratifiedGroupKFold
+
+        strata = self.strata(column)
+        if any(s is None for s in strata):
+            raise ValueError(
+                "StratifiedGroupKFold needs a stratum for every sample; the spec's "
+                "stratum annotation is missing for some rows (or stratum_var is null)."
+            )
+        n = len(self.sample_data)
+        X = np.zeros((n, 1))
+        splitter = StratifiedGroupKFold(n_splits=n_splits, **kwargs)
+        return splitter.split(X, y=strata, groups=self.groups())
 
 
 def load_split_spec(path):

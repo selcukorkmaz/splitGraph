@@ -17,8 +17,11 @@ relatedness_edges_from_kinship(
 spatial_edges_from_coords(coords, radius, id = "sample_id", coord_cols = NULL)
 }
 \arguments{
-\item{pairs}{A data.frame of subject pairs with two id columns and a metric
-column.}
+\item{pairs}{Either a data.frame of subject pairs with two id columns and a
+metric column (the long format written by KING, GCTA, and most kinship
+tools), or a square symmetric numeric matrix whose row names are subject
+ids (e.g. PLINK \code{--make-rel square} output); a matrix is expanded to
+its upper-triangle pairs before thresholding.}
 
 \item{threshold}{Minimum kinship value (inclusive) for a pair to be kept.}
 

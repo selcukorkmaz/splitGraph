@@ -46,7 +46,8 @@ ingest_metadata <- function(data, col_map = NULL, dataset_name = NULL, strict = 
     names(out),
     c(
       "sample_id", "subject_id", "batch_id", "study_id",
-      "timepoint_id", "assay_id", "featureset_id", "outcome_id"
+      "timepoint_id", "assay_id", "featureset_id", "outcome_id",
+      "site_id", "region_id", "platform_id"
     )
   )
 
@@ -121,23 +122,31 @@ create_nodes <- function(data, type, id_col, label_col = NULL, attr_cols = NULL,
   keep_cols <- unique(c(id_col, label_col, attr_cols))
   keep_cols <- keep_cols[!is.na(keep_cols) & nzchar(keep_cols)]
   selected <- data[, keep_cols, drop = FALSE]
+  # Coerce the identifier column up front so factor / numeric identifiers
+  # behave like character ones (`nzchar()` rejects factors outright).
+  selected[[id_col]] <- as.character(selected[[id_col]])
   selected <- selected[!is.na(selected[[id_col]]) & nzchar(selected[[id_col]]), , drop = FALSE]
 
   if (isTRUE(dedupe) && anyDuplicated(selected[[id_col]]) > 0L) {
-    dup_ids <- unique(selected[[id_col]][duplicated(selected[[id_col]])])
-    dup_rows <- selected[selected[[id_col]] %in% dup_ids, , drop = FALSE]
-    conflicting_ids <- dup_ids[vapply(dup_ids, function(dup_id) {
-      id_rows <- selected[selected[[id_col]] == dup_id, , drop = FALSE]
-      nrow(unique(id_rows)) > 1L
-    }, logical(1))]
+    # An identifier conflicts when it survives row-deduplication more than
+    # once, i.e. it appears with two different attribute rows. One pass over
+    # the unique rows, instead of one table scan per duplicated id. With only
+    # the id column present no two rows for one id can differ, so skip it.
+    conflicting_ids <- character()
+    if (ncol(selected) > 1L) {
+      distinct_rows <- unique(selected)
+      distinct_ids <- distinct_rows[[id_col]]
+      conflicting_ids <- unique(distinct_ids[duplicated(distinct_ids)])
+    }
 
     if (length(conflicting_ids) > 0L) {
-      stop(
+      .depgraph_stop(
         paste0(
           "Conflicting node definitions found for IDs: ",
           paste(conflicting_ids, collapse = ", ")
         ),
-        call. = FALSE
+        class = "splitgraph_ambiguity_error",
+        code = "conflicting_node_definitions"
       )
     }
     selected <- selected[!duplicated(selected[[id_col]]), , drop = FALSE]
@@ -163,7 +172,9 @@ create_nodes <- function(data, type, id_col, label_col = NULL, attr_cols = NULL,
 
 #' @rdname create_nodes
 #' @export
-create_edges <- function(data, from_col, to_col, from_type, to_type, relation, attr_cols = NULL, allow_missing = FALSE, dedupe = TRUE, from_prefix = TRUE, to_prefix = TRUE) {
+create_edges <- function(data, from_col, to_col, from_type, to_type, relation,
+                         attr_cols = NULL, allow_missing = FALSE, dedupe = TRUE,
+                         from_prefix = TRUE, to_prefix = TRUE) {
   .depgraph_assert(is.data.frame(data), "`data` must be a data.frame.")
   .depgraph_assert(from_col %in% names(data), paste0("Missing `from_col`: ", from_col))
   .depgraph_assert(to_col %in% names(data), paste0("Missing `to_col`: ", to_col))
@@ -176,7 +187,8 @@ create_edges <- function(data, from_col, to_col, from_type, to_type, relation, a
   if (nrow(schema_row) == 1L) {
     .depgraph_assert(
       identical(schema_row$from_type[[1L]], from_type) && identical(schema_row$to_type[[1L]], to_type),
-      paste0("Relation `", relation, "` expects ", schema_row$from_type[[1L]], " -> ", schema_row$to_type[[1L]], ".")
+      paste0("Relation `", relation, "` expects ", schema_row$from_type[[1L]], " -> ", schema_row$to_type[[1L]], "."),
+      class = "splitgraph_schema_error", code = "invalid_edge_signature"
     )
   }
 
@@ -191,7 +203,10 @@ create_edges <- function(data, from_col, to_col, from_type, to_type, relation, a
     if (isTRUE(allow_missing)) {
       selected <- selected[!missing_endpoint, , drop = FALSE]
     } else {
-      stop("Missing endpoint values found while creating edges.", call. = FALSE)
+      .depgraph_stop(
+        "Missing endpoint values found while creating edges.",
+        class = "splitgraph_reference_error", code = "missing_edge_endpoint"
+      )
     }
   }
 
@@ -221,12 +236,13 @@ create_edges <- function(data, from_col, to_col, from_type, to_type, relation, a
         parts <- strsplit(edge_key, "\r", fixed = TRUE)[[1L]]
         paste0(parts[[1L]], " -> ", parts[[2L]], " [", parts[[3L]], "]")
       }, character(1))
-      stop(
+      .depgraph_stop(
         paste0(
           "Conflicting edge definitions found for relations: ",
           paste(conflicting_labels, collapse = ", ")
         ),
-        call. = FALSE
+        class = "splitgraph_ambiguity_error",
+        code = "conflicting_edge_definitions"
       )
     }
 

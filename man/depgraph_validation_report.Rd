@@ -23,6 +23,7 @@ split_spec(
   group_var = "group_id",
   block_vars = character(),
   time_var = NULL,
+  stratum_var = NULL,
   ordering_required = FALSE,
   constraint_mode = NULL,
   constraint_strategy = NULL,
@@ -64,6 +65,10 @@ severity-specific messages.}
 \item{block_vars}{Optional blocking variable names.}
 
 \item{time_var}{Optional ordering column name.}
+
+\item{stratum_var}{Optional name of the column carrying the stratum
+annotation (the outcome level each sample carries). An annotation only:
+splitGraph never balances folds.}
 
 \item{ordering_required}{Whether ordering is required for downstream
 evaluation.}

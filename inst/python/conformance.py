@@ -26,6 +26,8 @@ def main(in_path, out_path):
         "n_samples": len(spec.sample_data),
         "grouping": spec.grouping(),
         "order_ranks": dict(zip(spec.sample_ids, spec.order_ranks())),
+        "stratum_var": spec.stratum_var,
+        "strata": dict(zip(spec.sample_ids, spec.strata())),
     }
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(result, handle)

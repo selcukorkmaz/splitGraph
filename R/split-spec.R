@@ -1,6 +1,8 @@
 # Helpers for translating splitGraph constraints into stable, tool-agnostic
-# sample-level split specifications. Downstream packages (bioLeak, fastml,
-# rsample, ...) consume `split_spec` objects through their own adapters.
+# sample-level split specifications. Downstream consumers read `split_spec`
+# objects through their own adapters: bioLeak (`as_leaksplits()`, the reference
+# consumer), the shipped Python reader (`inst/python/splitspec`), and ad hoc
+# adapters such as the rsample example in the adapter-cookbook vignette.
 
 .split_spec_sample_data_template <- function(n = 0L) {
   data.frame(
@@ -14,11 +16,57 @@
     region_group = rep(NA_character_, n),
     platform_group = rep(NA_character_, n),
     assay_group = rep(NA_character_, n),
+    stratum = rep(NA_character_, n),
     timepoint_id = rep(NA_character_, n),
     time_index = rep(NA_real_, n),
     order_rank = rep(NA_integer_, n),
     stringsAsFactors = FALSE
   )
+}
+
+# Stratum annotation per sample: the key of the single Outcome node attached to
+# the sample (`sample_has_outcome`), falling back to the single Outcome attached
+# to the sample's single subject (`subject_has_outcome`). NA when no outcome is
+# attached or when the attachment is not unique.
+.split_spec_stratum_from_graph <- function(graph, sample_ids) {
+  edge_data <- graph$edges$data
+  node_data <- graph$nodes$data
+  key_of <- function(node_ids) node_data$node_key[match(node_ids, node_data$node_id)]
+
+  stratum <- stats::setNames(rep(NA_character_, length(sample_ids)), sample_ids)
+  if (length(sample_ids) == 0L) return(character())
+
+  direct <- edge_data[edge_data$edge_type == "sample_has_outcome" & edge_data$from %in% sample_ids, c("from", "to"), drop = FALSE]
+  ambiguous <- character()
+  if (nrow(direct) > 0L) {
+    outcomes_by_sample <- lapply(split(direct$to, direct$from), unique)
+    unique_outcome <- lengths(outcomes_by_sample) == 1L
+    stratum[names(outcomes_by_sample)[unique_outcome]] <- key_of(unlist(outcomes_by_sample[unique_outcome], use.names = FALSE))
+    # A sample with several outcomes has no unique stratum; it must stay NA
+    # rather than borrow its subject's label.
+    ambiguous <- names(outcomes_by_sample)[!unique_outcome]
+  }
+
+  still_missing <- setdiff(names(stratum)[is.na(stratum)], ambiguous)
+  if (length(still_missing) > 0L) {
+    belongs <- edge_data[edge_data$edge_type == "sample_belongs_to_subject" & edge_data$from %in% still_missing, c("from", "to"), drop = FALSE]
+    subject_outcomes <- edge_data[edge_data$edge_type == "subject_has_outcome", c("from", "to"), drop = FALSE]
+    if (nrow(belongs) > 0L && nrow(subject_outcomes) > 0L) {
+      outcomes_by_subject <- lapply(split(subject_outcomes$to, subject_outcomes$from), unique)
+      unique_subject_outcome <- lengths(outcomes_by_subject) == 1L
+      subject_key <- stats::setNames(
+        key_of(unlist(outcomes_by_subject[unique_subject_outcome], use.names = FALSE)),
+        names(outcomes_by_subject)[unique_subject_outcome]
+      )
+      subjects_by_sample <- lapply(split(belongs$to, belongs$from), unique)
+      unique_subject <- lengths(subjects_by_sample) == 1L
+      sample_ids_with_subject <- names(subjects_by_sample)[unique_subject]
+      subject_of <- unlist(subjects_by_sample[unique_subject], use.names = FALSE)
+      stratum[sample_ids_with_subject] <- unname(subject_key[subject_of])
+    }
+  }
+
+  unname(stratum)
 }
 
 .split_spec_new_issue <- function(severity, code, message, n_affected = 0L, details = list()) {
@@ -77,39 +125,97 @@
   matched$linked_key
 }
 
+# Look up the direct assignment keys for one enrichment source. Enrichment is
+# best-effort annotation, not the primary grouping, so an ambiguous assignment
+# (e.g. a sample linked to two batches on a graph built with `validate =
+# FALSE`) must not abort `as_split_spec()`. Such sources are left as NA and the
+# reason is reported back so it can be recorded in the spec metadata.
+.split_spec_enrichment_keys <- function(graph, mode, sample_ids) {
+  tryCatch(
+    list(
+      keys = .split_spec_match_assignment_key(
+        .depgraph_direct_assignment(graph, mode, samples = sample_ids),
+        sample_ids
+      ),
+      warning = character()
+    ),
+    error = function(e) {
+      list(
+        keys = rep(NA_character_, length(sample_ids)),
+        warning = paste0(
+          "Could not enrich `", mode, "_group` from the graph; the column was ",
+          "left as NA. Reason: ", conditionMessage(e)
+        )
+      )
+    }
+  )
+}
+
+.split_spec_enrichment_time <- function(graph, sample_ids) {
+  tryCatch(
+    {
+      time_map <- .derive_time_constraints(graph, samples = sample_ids)$sample_map
+      list(
+        table = time_map[match(sample_ids, time_map$sample_node_id), , drop = FALSE],
+        warning = character()
+      )
+    },
+    error = function(e) {
+      list(
+        table = data.frame(
+          timepoint_id = rep(NA_character_, length(sample_ids)),
+          time_index = rep(NA_real_, length(sample_ids)),
+          order_rank = rep(NA_integer_, length(sample_ids)),
+          stringsAsFactors = FALSE
+        ),
+        warning = paste0(
+          "Could not enrich time ordering (`timepoint_id`, `time_index`, ",
+          "`order_rank`) from the graph; the columns were left as NA. Reason: ",
+          conditionMessage(e)
+        )
+      )
+    }
+  )
+}
+
+.split_spec_fill_missing <- function(current, replacement) {
+  missing <- is.na(current) | !nzchar(as.character(current))
+  current[missing] <- replacement[missing]
+  current
+}
+
+# Returns `sample_data` with the blocking / ordering annotation columns filled
+# from the graph wherever the constraint left them NA. Any source that could
+# not be resolved is reported through the "enrichment_warnings" attribute.
 .split_spec_enrich_from_graph <- function(sample_data, graph) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   sample_ids <- sample_data$sample_node_id
+  enrichment_warnings <- character()
 
-  batch_assignments <- .depgraph_direct_assignment(graph, "batch", samples = sample_ids)
-  study_assignments <- .depgraph_direct_assignment(graph, "study", samples = sample_ids)
-  site_assignments <- .depgraph_direct_assignment(graph, "site", samples = sample_ids)
-  time_constraint <- .derive_time_constraints(graph, samples = sample_ids)$sample_map
-  time_constraint <- time_constraint[match(sample_ids, time_constraint$sample_node_id), , drop = FALSE]
+  group_sources <- c(
+    batch_group = "batch",
+    study_group = "study",
+    site_group = "site",
+    region_group = "region",
+    platform_group = "platform",
+    assay_group = "assay"
+  )
+  for (column in names(group_sources)) {
+    lookup <- .split_spec_enrichment_keys(graph, group_sources[[column]], sample_ids)
+    sample_data[[column]] <- .split_spec_fill_missing(sample_data[[column]], lookup$keys)
+    enrichment_warnings <- c(enrichment_warnings, lookup$warning)
+  }
 
-  missing_batch <- is.na(sample_data$batch_group) | !nzchar(sample_data$batch_group)
-  sample_data$batch_group[missing_batch] <- .split_spec_match_assignment_key(batch_assignments, sample_ids)[missing_batch]
+  time_lookup <- .split_spec_enrichment_time(graph, sample_ids)
+  time_constraint <- time_lookup$table
+  enrichment_warnings <- c(enrichment_warnings, time_lookup$warning)
 
-  missing_study <- is.na(sample_data$study_group) | !nzchar(sample_data$study_group)
-  sample_data$study_group[missing_study] <- .split_spec_match_assignment_key(study_assignments, sample_ids)[missing_study]
+  sample_data$stratum <- .split_spec_fill_missing(
+    sample_data$stratum,
+    .split_spec_stratum_from_graph(graph, sample_ids)
+  )
 
-  missing_site <- is.na(sample_data$site_group) | !nzchar(sample_data$site_group)
-  sample_data$site_group[missing_site] <- .split_spec_match_assignment_key(site_assignments, sample_ids)[missing_site]
-
-  region_assignments <- .depgraph_direct_assignment(graph, "region", samples = sample_ids)
-  missing_region <- is.na(sample_data$region_group) | !nzchar(sample_data$region_group)
-  sample_data$region_group[missing_region] <- .split_spec_match_assignment_key(region_assignments, sample_ids)[missing_region]
-
-  platform_assignments <- .depgraph_direct_assignment(graph, "platform", samples = sample_ids)
-  missing_platform <- is.na(sample_data$platform_group) | !nzchar(sample_data$platform_group)
-  sample_data$platform_group[missing_platform] <- .split_spec_match_assignment_key(platform_assignments, sample_ids)[missing_platform]
-
-  assay_assignments <- .depgraph_direct_assignment(graph, "assay", samples = sample_ids)
-  missing_assay <- is.na(sample_data$assay_group) | !nzchar(sample_data$assay_group)
-  sample_data$assay_group[missing_assay] <- .split_spec_match_assignment_key(assay_assignments, sample_ids)[missing_assay]
-
-  missing_timepoint <- is.na(sample_data$timepoint_id) | !nzchar(sample_data$timepoint_id)
-  sample_data$timepoint_id[missing_timepoint] <- time_constraint$timepoint_id[missing_timepoint]
+  sample_data$timepoint_id <- .split_spec_fill_missing(sample_data$timepoint_id, time_constraint$timepoint_id)
 
   missing_time_index <- is.na(sample_data$time_index)
   sample_data$time_index[missing_time_index] <- time_constraint$time_index[missing_time_index]
@@ -117,6 +223,7 @@
   missing_order <- is.na(sample_data$order_rank)
   sample_data$order_rank[missing_order] <- time_constraint$order_rank[missing_order]
 
+  attr(sample_data, "enrichment_warnings") <- enrichment_warnings
   sample_data
 }
 
@@ -146,15 +253,36 @@
 #'
 #' The translation layer always produces canonical sample-level columns
 #' including \code{sample_id}, \code{sample_node_id}, \code{group_id}, and
-#' \code{primary_group}. When available, it also carries \code{batch_group},
-#' \code{study_group}, \code{timepoint_id}, \code{time_index}, and
-#' \code{order_rank}. Missing but relevant fields are retained as \code{NA}
-#' columns rather than omitted.
+#' \code{primary_group}. When available, it also carries the blocking columns
+#' (\code{batch_group}, \code{study_group}, \code{site_group},
+#' \code{region_group}, \code{platform_group}, \code{assay_group}), the
+#' \code{stratum} annotation, and the ordering columns (\code{timepoint_id},
+#' \code{time_index}, \code{order_rank}). Missing but relevant fields are
+#' retained as \code{NA} columns rather than omitted.
+#'
+#' \code{stratum} is filled from the graph when one is supplied: the key of the
+#' single \code{Outcome} node attached to a sample via
+#' \code{sample_has_outcome}, or, failing that, the single outcome attached to
+#' the sample's subject via \code{subject_has_outcome}. It is an
+#' \emph{annotation} of the outcome level each sample carries, exposed through
+#' \code{stratum_var} so a downstream consumer (for example scikit-learn's
+#' \code{StratifiedGroupKFold}) can stratify; splitGraph itself never balances
+#' folds. When no sample has a unique outcome, \code{stratum_var} is
+#' \code{NULL}.
 #'
 #' When only a subset of samples has ordering metadata, the translated split
 #' spec still exposes that partial ordering through \code{time_var}, but
 #' \code{ordering_required} remains \code{FALSE}. Ordering is only marked as
 #' required when the constraint implies complete ordering coverage.
+#'
+#' When \code{graph} is supplied, the blocking and ordering annotation columns
+#' are filled from the graph wherever the constraint left them \code{NA}. This
+#' enrichment is best-effort: a source that cannot be resolved unambiguously
+#' (for example a sample linked to two batches on a graph built with
+#' \code{validate = FALSE}) is left as \code{NA} and the reason is recorded in
+#' \code{metadata$enrichment_warnings} (and appended to
+#' \code{metadata$warnings}) instead of aborting the translation. The primary
+#' \code{group_id} always comes from the constraint and is never affected.
 #'
 #' The split-spec validator checks:
 #' \itemize{
@@ -178,6 +306,36 @@
 #' \code{summarize_leakage_risks()} reuses \code{validate_graph()} and
 #' \code{split_constraint} metadata rather than duplicating downstream
 #' evaluation logic.
+#'
+#' @section What downstream consumers read:
+#' The \code{split_spec} contract is wider than any single consumer uses today.
+#' Verified against the released versions on 2026-09-14:
+#'
+#' \tabular{lll}{
+#'   \strong{Consumer} \tab \strong{Reads} \tab \strong{Modes} \cr
+#'   bioLeak 0.3.8 \code{as_leaksplits()} \tab
+#'     \code{sample_data} columns \code{sample_id}, the \code{group_var} column,
+#'     \code{batch_group}, \code{study_group}, \code{timepoint_id},
+#'     \code{order_rank}; fields \code{group_var}, \code{constraint_mode},
+#'     \code{time_var} \tab
+#'     subject, batch, study, time. Every other \code{constraint_mode}
+#'     currently \emph{errors} inside bioLeak: site, region, platform, assay,
+#'     relatedness and spatial are absent from its mode map ("subscript out of
+#'     bounds"), and composite maps to \code{make_split_plan(mode =
+#'     "combined")} without the \code{constraints} / \code{primary_axis} that
+#'     mode requires. Until that is fixed, join \code{group_id} onto your
+#'     observation frame and call \code{bioLeak::make_split_plan(group =
+#'     "group_id")} directly; the grouping is preserved. \cr
+#'   Python \code{splitspec} reader (shipped) \tab
+#'     every field and column, including \code{stratum_var} / \code{stratum}
+#'     and the block columns \tab all \cr
+#'   rsample (adapter-cookbook vignette) \tab
+#'     \code{group_id} for \code{group_vfold_cv()}, \code{order_rank} for
+#'     \code{rolling_origin()}; block columns read for fold auditing \tab all \cr
+#' }
+#' Every row is pinned by a contract test (run when bioLeak is installed),
+#' including the workaround, so the seam cannot drift silently; the test fails
+#' deliberately when a bioLeak release starts accepting the other modes.
 #'
 #' @param constraint A \code{split_constraint}.
 #' @param graph A \code{dependency_graph}.
@@ -242,8 +400,11 @@ as_split_spec <- function(constraint, graph = NULL) {
   }
 
   enrichment_used <- FALSE
+  enrichment_warnings <- character()
   if (!is.null(graph)) {
     sample_data <- .split_spec_enrich_from_graph(sample_data, graph)
+    enrichment_warnings <- attr(sample_data, "enrichment_warnings", exact = TRUE) %||% character()
+    attr(sample_data, "enrichment_warnings") <- NULL
     enrichment_used <- TRUE
   }
 
@@ -268,6 +429,7 @@ as_split_spec <- function(constraint, graph = NULL) {
   }
 
   time_var <- if (!all(is.na(sample_data$order_rank))) "order_rank" else NULL
+  stratum_var <- if (!all(is.na(sample_data$stratum))) "stratum" else NULL
   ordering_required <- isTRUE(constraint$recommended_downstream_args$ordering_required)
 
   split_spec(
@@ -275,6 +437,7 @@ as_split_spec <- function(constraint, graph = NULL) {
     group_var = "group_id",
     block_vars = block_vars,
     time_var = time_var,
+    stratum_var = stratum_var,
     ordering_required = ordering_required,
     constraint_mode = mode,
     constraint_strategy = strategy,
@@ -285,12 +448,18 @@ as_split_spec <- function(constraint, graph = NULL) {
       source_mode = mode,
       source_strategy = strategy,
       relations_used = constraint$metadata$relations_used %||% character(),
+      via = as.character(constraint$metadata$via %||% character()),
+      priority = as.character(constraint$metadata$priority %||% character()),
+      threshold = constraint$metadata$threshold %||% NA_real_,
+      threshold_metric = constraint$metadata$threshold_metric %||% NA_character_,
       splitgraph_version = .depgraph_package_version(),
+      igraph_version = tryCatch(as.character(utils::packageVersion("igraph")), error = function(e) NA_character_),
       derived_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS6%z"),
       n_samples = nrow(sample_data),
       n_groups = length(unique(sample_data$group_id)),
-      warnings = constraint$metadata$warnings %||% character(),
-      enriched_from_graph = enrichment_used
+      warnings = c(constraint$metadata$warnings %||% character(), enrichment_warnings),
+      enriched_from_graph = enrichment_used,
+      enrichment_warnings = enrichment_warnings
     )
   )
 }
@@ -399,6 +568,35 @@ validate_split_spec <- function(x) {
     }
   }
 
+  if (!is.null(x$stratum_var)) {
+    if (!x$stratum_var %in% names(data)) {
+      issues[[length(issues) + 1L]] <- .split_spec_new_issue(
+        severity = "error",
+        code = "invalid_stratum_var",
+        message = paste0("Declared `stratum_var` is not present in `sample_data`: ", x$stratum_var)
+      )
+    } else {
+      stratum_missing <- is.na(data[[x$stratum_var]]) | !nzchar(as.character(data[[x$stratum_var]]))
+      if (all(stratum_missing)) {
+        issues[[length(issues) + 1L]] <- .split_spec_new_issue(
+          severity = "warning",
+          code = "empty_stratum_var",
+          message = paste0("Stratum variable `", x$stratum_var, "` is present but empty for all samples.")
+        )
+      } else if (any(stratum_missing)) {
+        issues[[length(issues) + 1L]] <- .split_spec_new_issue(
+          severity = "advisory",
+          code = "partial_stratum",
+          message = paste0(
+            "Stratum variable `", x$stratum_var, "` is missing for ",
+            sum(stratum_missing), " of ", nrow(data), " samples."
+          ),
+          n_affected = sum(stratum_missing)
+        )
+      }
+    }
+  }
+
   split_spec_validation(
     issues = .split_spec_bind_issues(issues),
     metadata = list(
@@ -437,6 +635,9 @@ validate_split_spec <- function(x) {
     subject_cross_study_overlap  = mode %in% c("subject", "study") ||
                                      composite_covers("subject") ||
                                      composite_covers("study"),
+    subject_cross_site_overlap   = mode %in% c("subject", "site") ||
+                                     composite_covers("subject") ||
+                                     composite_covers("site"),
     heavy_batch_reuse            = identical(mode, "batch") || composite_covers("batch"),
     missing_time_ordering        = identical(mode, "time") || composite_covers("time"),
     per_dataset_featureset       = FALSE,
@@ -669,6 +870,7 @@ summarize_leakage_risks <- function(graph, constraint = NULL, split_spec = NULL,
       message = character(),
       source = character(),
       n_affected = integer(),
+      severed = logical(),
       stringsAsFactors = FALSE
     )
   } else {

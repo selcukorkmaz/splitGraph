@@ -31,7 +31,38 @@
   )
 }
 
+# Bulk variant of `.new_validation_issue()`: one issue per element of
+# `messages`, with per-issue node/edge id vectors supplied as lists. Building the
+# table once instead of rbind-ing one-row frames is what keeps validation linear
+# on cohorts with thousands of per-subject advisories.
+.new_validation_issues <- function(level, severity, code, messages, node_ids = NULL, edge_ids = NULL, details = NULL) {
+  n <- length(messages)
+  if (n == 0L) {
+    return(NULL)
+  }
+  .depgraph_assert(level %in% .depgraph_validation_levels, paste0("Unsupported validation level: ", level))
+  .depgraph_assert(severity %in% .depgraph_validation_severities, paste0("Unsupported validation severity: ", severity))
+
+  node_ids <- if (is.null(node_ids)) rep(list(character()), n) else lapply(node_ids, as.character)
+  edge_ids <- if (is.null(edge_ids)) rep(list(character()), n) else lapply(edge_ids, as.character)
+  details <- if (is.null(details)) rep(list(list()), n) else details
+  details <- lapply(details, .depgraph_normalize_attr_entry, context = "`details`")
+
+  data.frame(
+    issue_id = NA_character_,
+    level = level,
+    severity = severity,
+    code = code,
+    message = as.character(messages),
+    node_ids = I(unname(node_ids)),
+    edge_ids = I(unname(edge_ids)),
+    details = I(unname(details)),
+    stringsAsFactors = FALSE
+  )
+}
+
 .depgraph_bind_issues <- function(issues) {
+  issues <- Filter(Negate(is.null), issues)
   if (length(issues) == 0L) {
     return(.depgraph_empty_issue_data())
   }
@@ -59,20 +90,6 @@
     by_severity = .depgraph_issue_count_table(issues, "severity"),
     by_code = .depgraph_issue_count_table(issues, "code")
   )
-}
-
-.depgraph_old_checks_to_levels <- function(checks) {
-  checks <- unique(as.character(checks))
-  levels <- character()
-
-  if (any(checks %in% c("ids", "references", "cardinality"))) {
-    levels <- c(levels, "structural")
-  }
-  if (any(checks %in% c("schema", "time", "cardinality"))) {
-    levels <- c(levels, "semantic")
-  }
-
-  unique(levels)
 }
 
 .validate_structural <- function(graph) {
@@ -177,36 +194,45 @@
     )
   }
 
-  type_map <- stats::setNames(node_data$node_type, node_data$node_id)
   if (nrow(edge_data) > 0L) {
-    for (i in seq_len(nrow(edge_data))) {
-      edge_type <- edge_data$edge_type[[i]]
-      schema_row <- .depgraph_edge_type_schema(edge_type)
-      if (nrow(schema_row) == 0L) {
-        issues[[length(issues) + 1L]] <- .new_validation_issue(
-          level = "structural",
-          severity = "error",
-          code = "unsupported_edge_type",
-          message = paste0("Unknown edge type encountered: ", edge_type),
-          edge_ids = edge_data$edge_id[[i]]
-        )
-        next
-      }
+    # Vectorised signature check: one join of the edge table against the schema.
+    type_map <- stats::setNames(node_data$node_type, node_data$node_id)
+    schema_idx <- match(edge_data$edge_type, .depgraph_edge_schema$edge_type)
+    unknown <- is.na(schema_idx)
 
-      observed_from <- unname(type_map[[edge_data$from[[i]]]])
-      observed_to <- unname(type_map[[edge_data$to[[i]]]])
-      if (!identical(observed_from, schema_row$from_type[[1L]]) || !identical(observed_to, schema_row$to_type[[1L]])) {
-        issues[[length(issues) + 1L]] <- .new_validation_issue(
+    if (any(unknown)) {
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
+        level = "structural",
+        severity = "error",
+        code = "unsupported_edge_type",
+        messages = paste0("Unknown edge type encountered: ", edge_data$edge_type[unknown]),
+        edge_ids = as.list(edge_data$edge_id[unknown])
+      )
+    }
+
+    known <- which(!unknown)
+    if (length(known) > 0L) {
+      expected_from <- .depgraph_edge_schema$from_type[schema_idx[known]]
+      expected_to <- .depgraph_edge_schema$to_type[schema_idx[known]]
+      observed_from <- unname(type_map[edge_data$from[known]])
+      observed_to <- unname(type_map[edge_data$to[known]])
+      # An endpoint missing from the node table (reported separately above)
+      # compares as NA; treat it as a mismatch, as the per-edge loop did.
+      bad <- is.na(observed_from) | is.na(observed_to) |
+        observed_from != expected_from | observed_to != expected_to
+      bad_idx <- known[bad]
+      if (length(bad_idx) > 0L) {
+        issues[[length(issues) + 1L]] <- .new_validation_issues(
           level = "structural",
           severity = "error",
           code = "invalid_edge_signature",
-          message = paste0(
-            "Edge `", edge_data$edge_id[[i]], "` violates schema for `", edge_type,
-            "` (expected ", schema_row$from_type[[1L]], " -> ", schema_row$to_type[[1L]],
-            ", found ", observed_from, " -> ", observed_to, ")."
+          messages = paste0(
+            "Edge `", edge_data$edge_id[bad_idx], "` violates schema for `", edge_data$edge_type[bad_idx],
+            "` (expected ", expected_from[bad], " -> ", expected_to[bad],
+            ", found ", observed_from[bad], " -> ", observed_to[bad], ")."
           ),
-          node_ids = c(edge_data$from[[i]], edge_data$to[[i]]),
-          edge_ids = edge_data$edge_id[[i]]
+          node_ids = Map(c, edge_data$from[bad_idx], edge_data$to[bad_idx]),
+          edge_ids = as.list(edge_data$edge_id[bad_idx])
         )
       }
     }
@@ -218,12 +244,8 @@
       next
     }
     edge_subset <- edge_data[subset_idx, c("edge_id", "from", "to"), drop = FALSE]
-    counts <- stats::aggregate(
-      edge_subset$to,
-      by = list(from = edge_subset$from),
-      FUN = function(x) length(unique(x))
-    )
-    bad <- counts[counts$x > 1L, , drop = FALSE]
+    counts <- .depgraph_count_unique_by(edge_subset$to, edge_subset$from)
+    bad <- data.frame(from = counts$by[counts$n > 1L], stringsAsFactors = FALSE)
     if (nrow(bad) > 0L) {
       offending_edges <- edge_subset$edge_id[edge_subset$from %in% bad$from]
       issues[[length(issues) + 1L]] <- .new_validation_issue(
@@ -249,35 +271,52 @@
   edge_data <- graph$edges$data
   issues <- list()
 
-  for (i in seq_len(nrow(node_data))) {
-    attr_check <- .depgraph_validate_node_attrs(
-      node_type = node_data$node_type[[i]],
-      attrs = node_data$attrs[[i]]
+  if (nrow(node_data) > 0L) {
+    # Only nodes that carry attributes can have unknown ones, and no node type
+    # currently declares required attributes; still evaluate the required check
+    # for every node type present (once per type, not once per node) so a
+    # future schema with required attrs keeps working.
+    has_attrs <- lengths(node_data$attrs) > 0L
+    required_by_type <- vapply(
+      unique(node_data$node_type),
+      function(type) length(.depgraph_node_type_schema(type)$required_attrs) > 0L,
+      logical(1)
     )
+    needs_check <- has_attrs | required_by_type[node_data$node_type]
 
-    if (length(attr_check$missing_required) > 0L) {
-      issues[[length(issues) + 1L]] <- .new_validation_issue(
+    checks <- vector("list", nrow(node_data))
+    checks[needs_check] <- Map(
+      function(type, attrs) .depgraph_validate_node_attrs(type, attrs),
+      node_data$node_type[needs_check], node_data$attrs[needs_check]
+    )
+    missing_required <- lapply(checks, function(x) if (is.null(x)) character() else x$missing_required)
+    unknown_attrs <- lapply(checks, function(x) if (is.null(x)) character() else x$unknown_attrs)
+
+    miss_idx <- which(lengths(missing_required) > 0L)
+    if (length(miss_idx) > 0L) {
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
         level = "semantic",
         severity = "error",
         code = "missing_required_node_attr",
-        message = paste0(
-          "Node `", node_data$node_id[[i]], "` is missing required attributes: ",
-          paste(attr_check$missing_required, collapse = ", ")
+        messages = paste0(
+          "Node `", node_data$node_id[miss_idx], "` is missing required attributes: ",
+          vapply(missing_required[miss_idx], paste, character(1), collapse = ", ")
         ),
-        node_ids = node_data$node_id[[i]]
+        node_ids = as.list(node_data$node_id[miss_idx])
       )
     }
 
-    if (length(attr_check$unknown_attrs) > 0L) {
-      issues[[length(issues) + 1L]] <- .new_validation_issue(
+    unk_idx <- which(has_attrs & lengths(unknown_attrs) > 0L)
+    if (length(unk_idx) > 0L) {
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
         level = "semantic",
         severity = "warning",
         code = "non_canonical_node_attr",
-        message = paste0(
-          "Node `", node_data$node_id[[i]], "` contains non-canonical attributes: ",
-          paste(attr_check$unknown_attrs, collapse = ", ")
+        messages = paste0(
+          "Node `", node_data$node_id[unk_idx], "` contains non-canonical attributes: ",
+          vapply(unknown_attrs[unk_idx], paste, character(1), collapse = ", ")
         ),
-        node_ids = node_data$node_id[[i]]
+        node_ids = as.list(node_data$node_id[unk_idx])
       )
     }
   }
@@ -293,15 +332,9 @@
     names(targets) <- sample_ids
 
     if (nrow(relation_edges) > 0L) {
-      observed_counts <- stats::aggregate(
-        relation_edges$to,
-        by = list(from = relation_edges$from),
-        FUN = function(x) length(unique(x))
-      )
-      counts[observed_counts$from] <- observed_counts$x
-      for (sample_id in unique(relation_edges$from)) {
-        targets[[sample_id]] <- unique(relation_edges$to[relation_edges$from == sample_id])
-      }
+      targets_by_sample <- lapply(split(relation_edges$to, relation_edges$from), unique)
+      counts[names(targets_by_sample)] <- lengths(targets_by_sample)
+      targets[names(targets_by_sample)] <- targets_by_sample
     }
 
     if (!is.null(rule$missing_code) && !is.null(rule$missing_severity) && rule$min_targets > 0L) {
@@ -461,23 +494,18 @@
 
   subject_edges <- edge_data[edge_data$edge_type == "sample_belongs_to_subject", c("edge_id", "from", "to"), drop = FALSE]
   if (nrow(subject_edges) > 0L) {
-    sample_counts <- stats::aggregate(
-      subject_edges$from,
-      by = list(subject = subject_edges$to),
-      FUN = function(x) length(unique(x))
-    )
-    repeated <- sample_counts[sample_counts$x > 1L, , drop = FALSE]
-    for (i in seq_len(nrow(repeated))) {
-      subject_id <- repeated$subject[[i]]
-      sample_ids <- unique(subject_edges$from[subject_edges$to == subject_id])
-      edge_ids <- subject_edges$edge_id[subject_edges$to == subject_id]
-      issues[[length(issues) + 1L]] <- .new_validation_issue(
+    sample_counts <- .depgraph_count_unique_by(subject_edges$from, subject_edges$to)
+    subject_ids <- sample_counts$by[sample_counts$n > 1L]
+    if (length(subject_ids) > 0L) {
+      samples_by_subject <- split(subject_edges$from, subject_edges$to)
+      edges_by_subject <- split(subject_edges$edge_id, subject_edges$to)
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
         level = "leakage",
         severity = "advisory",
         code = "repeated_subject_samples",
-        message = paste0("Subject `", subject_id, "` is linked to multiple samples."),
-        node_ids = c(subject_id, sample_ids),
-        edge_ids = edge_ids
+        messages = paste0("Subject `", subject_ids, "` is linked to multiple samples."),
+        node_ids = Map(function(s, samples) c(s, unique(samples)), subject_ids, samples_by_subject[subject_ids]),
+        edge_ids = edges_by_subject[subject_ids]
       )
     }
   }
@@ -491,21 +519,47 @@
       suffixes = c("_subject", "_study")
     )
     if (nrow(subject_study) > 0L) {
-      study_counts <- stats::aggregate(
-        subject_study$to_study,
-        by = list(subject = subject_study$to_subject),
-        FUN = function(x) length(unique(x))
-      )
-      cross_study <- study_counts[study_counts$x > 1L, , drop = FALSE]
-      for (i in seq_len(nrow(cross_study))) {
-        subject_id <- cross_study$subject[[i]]
-        linked_samples <- unique(subject_study$from[subject_study$to_subject == subject_id])
-        issues[[length(issues) + 1L]] <- .new_validation_issue(
+      study_counts <- .depgraph_count_unique_by(subject_study$to_study, subject_study$to_subject)
+      subject_ids <- study_counts$by[study_counts$n > 1L]
+      if (length(subject_ids) > 0L) {
+        samples_by_subject <- split(subject_study$from, subject_study$to_subject)
+        issues[[length(issues) + 1L]] <- .new_validation_issues(
           level = "leakage",
           severity = "warning",
           code = "subject_cross_study_overlap",
-          message = paste0("Subject `", subject_id, "` appears across multiple studies."),
-          node_ids = c(subject_id, linked_samples)
+          messages = paste0("Subject `", subject_ids, "` appears across multiple studies."),
+          node_ids = Map(function(s, samples) c(s, unique(samples)), subject_ids, samples_by_subject[subject_ids])
+        )
+      }
+    }
+  }
+
+  # A subject whose samples were collected at several sites: mirrors the
+  # cross-study rule. Grouping by site alone would then place one individual
+  # in several site groups, and a site holdout would leak that individual.
+  site_edges <- edge_data[edge_data$edge_type == "sample_collected_at_site", c("edge_id", "from", "to"), drop = FALSE]
+  if (nrow(subject_edges) > 0L && nrow(site_edges) > 0L) {
+    subject_site <- merge(
+      subject_edges[, c("from", "to")],
+      site_edges[, c("from", "to")],
+      by = "from",
+      suffixes = c("_subject", "_site")
+    )
+    if (nrow(subject_site) > 0L) {
+      site_counts <- .depgraph_count_unique_by(subject_site$to_site, subject_site$to_subject)
+      subject_ids <- site_counts$by[site_counts$n > 1L]
+      if (length(subject_ids) > 0L) {
+        samples_by_subject <- split(subject_site$from, subject_site$to_subject)
+        sites_by_subject <- split(subject_site$to_site, subject_site$to_subject)
+        issues[[length(issues) + 1L]] <- .new_validation_issues(
+          level = "leakage",
+          severity = "warning",
+          code = "subject_cross_site_overlap",
+          messages = paste0("Subject `", subject_ids, "` has samples collected at multiple sites."),
+          node_ids = Map(
+            function(s, samples, sites) c(s, unique(samples), unique(sites)),
+            subject_ids, samples_by_subject[subject_ids], sites_by_subject[subject_ids]
+          )
         )
       }
     }
@@ -529,23 +583,18 @@
 
   feature_edges <- edge_data[edge_data$edge_type == "sample_uses_featureset", c("edge_id", "from", "to"), drop = FALSE]
   if (nrow(feature_edges) > 0L) {
-    feature_counts <- stats::aggregate(
-      feature_edges$from,
-      by = list(featureset = feature_edges$to),
-      FUN = function(x) length(unique(x))
-    )
-    shared <- feature_counts[feature_counts$x > 1L, , drop = FALSE]
-    for (i in seq_len(nrow(shared))) {
-      featureset_id <- shared$featureset[[i]]
-      linked_samples <- unique(feature_edges$from[feature_edges$to == featureset_id])
-      edge_ids <- feature_edges$edge_id[feature_edges$to == featureset_id]
-      issues[[length(issues) + 1L]] <- .new_validation_issue(
+    feature_counts <- .depgraph_count_unique_by(feature_edges$from, feature_edges$to)
+    fs_ids <- feature_counts$by[feature_counts$n > 1L]
+    if (length(fs_ids) > 0L) {
+      samples_by_fs <- split(feature_edges$from, feature_edges$to)
+      edges_by_fs <- split(feature_edges$edge_id, feature_edges$to)
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
         level = "leakage",
         severity = "advisory",
         code = "shared_featureset_provenance",
-        message = paste0("FeatureSet `", featureset_id, "` is shared across multiple samples."),
-        node_ids = c(featureset_id, linked_samples),
-        edge_ids = edge_ids
+        messages = paste0("FeatureSet `", fs_ids, "` is shared across multiple samples."),
+        node_ids = Map(function(f, samples) c(f, unique(samples)), fs_ids, samples_by_fs[fs_ids]),
+        edge_ids = edges_by_fs[fs_ids]
       )
     }
   }
@@ -578,22 +627,18 @@
   batch_edges <- edge_data[edge_data$edge_type == "sample_processed_in_batch", c("edge_id", "from", "to"), drop = FALSE]
   n_samples <- sum(node_data$node_type == "Sample")
   if (nrow(batch_edges) > 0L && n_samples > 0L) {
-    batch_counts <- stats::aggregate(
-      batch_edges$from,
-      by = list(batch = batch_edges$to),
-      FUN = function(x) length(unique(x))
-    )
+    batch_counts <- .depgraph_count_unique_by(batch_edges$from, batch_edges$to)
     threshold <- max(3L, ceiling(n_samples * 0.5))
-    heavy <- batch_counts[batch_counts$x >= threshold, , drop = FALSE]
-    for (i in seq_len(nrow(heavy))) {
-      batch_id <- heavy$batch[[i]]
-      issues[[length(issues) + 1L]] <- .new_validation_issue(
+    batch_ids <- batch_counts$by[batch_counts$n >= threshold]
+    if (length(batch_ids) > 0L) {
+      edges_by_batch <- split(batch_edges$edge_id, batch_edges$to)
+      issues[[length(issues) + 1L]] <- .new_validation_issues(
         level = "leakage",
         severity = "advisory",
         code = "heavy_batch_reuse",
-        message = paste0("Batch `", batch_id, "` is reused across many samples."),
-        node_ids = batch_id,
-        edge_ids = batch_edges$edge_id[batch_edges$to == batch_id]
+        messages = paste0("Batch `", batch_ids, "` is reused across many samples."),
+        node_ids = as.list(batch_ids),
+        edge_ids = edges_by_batch[batch_ids]
       )
     }
   }
@@ -603,18 +648,8 @@
 
 #' @rdname build_dependency_graph
 #' @export
-validate_graph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL, validation_overrides = NULL) {
+validate_graph <- function(graph, error_on_fail = FALSE, levels = NULL, severities = NULL, validation_overrides = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-
-  if (!missing(checks)) {
-    .Deprecated(
-      msg = paste0(
-        "The `checks` argument of `validate_graph()` is deprecated. ",
-        "Use `levels` and `severities` instead."
-      ),
-      package = "splitGraph"
-    )
-  }
 
   if (!is.null(validation_overrides)) {
     .depgraph_assert(
@@ -626,18 +661,7 @@ validate_graph <- function(graph, checks = c("ids", "references", "cardinality",
     graph <- .depgraph_with_overrides(graph, validation_overrides)
   }
 
-  selected_levels <- levels
-  if (is.null(selected_levels)) {
-    if (missing(checks)) {
-      selected_levels <- .depgraph_validation_levels
-    } else {
-      selected_levels <- .depgraph_old_checks_to_levels(checks)
-      if (length(selected_levels) == 0L) {
-        selected_levels <- .depgraph_validation_levels
-      }
-    }
-  }
-  selected_levels <- unique(as.character(selected_levels))
+  selected_levels <- if (is.null(levels)) .depgraph_validation_levels else unique(as.character(levels))
   .depgraph_assert(all(selected_levels %in% .depgraph_validation_levels), "`levels` contains unsupported values.")
 
   selected_severities <- if (is.null(severities)) .depgraph_validation_severities else unique(as.character(severities))
@@ -690,36 +714,12 @@ validate_graph <- function(graph, checks = c("ids", "references", "cardinality",
   )
 
   if (length(all_errors) > 0L && isTRUE(error_on_fail)) {
-    stop(paste(c("Graph validation failed.", report$errors), collapse = "\n"), call. = FALSE)
+    .depgraph_stop(
+      paste(c("Graph validation failed.", report$errors), collapse = "\n"),
+      class = "splitgraph_validation_error",
+      code = "graph_validation_failed"
+    )
   }
 
   report
-}
-
-#' @rdname build_dependency_graph
-#' @export
-validate_depgraph <- function(graph, checks = c("ids", "references", "cardinality", "schema", "time"), error_on_fail = FALSE, levels = NULL, severities = NULL, validation_overrides = NULL) {
-  .Deprecated(
-    new = "validate_graph",
-    package = "splitGraph",
-    msg = "`validate_depgraph()` is deprecated. Use `validate_graph()` instead."
-  )
-  if (missing(checks)) {
-    return(validate_graph(
-      graph = graph,
-      error_on_fail = error_on_fail,
-      levels = levels,
-      severities = severities,
-      validation_overrides = validation_overrides
-    ))
-  }
-
-  validate_graph(
-    graph = graph,
-    checks = checks,
-    error_on_fail = error_on_fail,
-    levels = levels,
-    severities = severities,
-    validation_overrides = validation_overrides
-  )
 }

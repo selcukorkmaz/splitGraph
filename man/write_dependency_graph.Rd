@@ -7,7 +7,7 @@
 \usage{
 write_dependency_graph(graph, path, pretty = TRUE)
 
-read_dependency_graph(path)
+read_dependency_graph(path, validate = FALSE)
 }
 \arguments{
 \item{graph}{A \code{dependency_graph} produced by
@@ -17,11 +17,22 @@ read_dependency_graph(path)
 
 \item{pretty}{If \code{TRUE} (default), the JSON is indented for human
 inspection. Set \code{FALSE} for a compact representation.}
+
+\item{validate}{If \code{TRUE}, check the file against the shipped schema
+(\code{validate_graph_json()} / \code{validate_split_spec_json()}) before
+parsing and run \code{validate_graph()} (for graphs) or
+\code{validate_split_spec()} (for specs) on the result, failing with a
+classed error on any violation or error-severity issue. The default
+\code{FALSE} loads the object as written, so a graph saved with
+\code{validate = FALSE} or predating a validation rule still loads; use
+\code{validate = TRUE} for files from untrusted or older sources.}
 }
 \value{
 \code{write_dependency_graph()} invisibly returns \code{path}.
-  \code{read_dependency_graph()} returns a validated
-  \code{dependency_graph}.
+  \code{read_dependency_graph()} returns a \code{dependency_graph} whose
+  node and edge tables are checked for internal consistency with the
+  rebuilt \code{igraph}; with the default \code{validate = FALSE} it is
+  \emph{not} re-run through \code{validate_graph()}.
 }
 \description{
 Write a \code{dependency_graph} to a JSON file and read it back. The on-disk
@@ -41,15 +52,20 @@ read JSON can interpret the format).
 
 \preformatted{
 {
-  "$schema": "https://.../inst/schema/dependency_graph.schema.json",
+  "$schema": "https://.../inst/schema/0.3.0/dependency_graph.schema.json",
   "splitGraph_object": "dependency_graph",
-  "schema_version": "0.2.0",
+  "schema_version": "0.3.0",
   "metadata": {
     "graph_name": "...",
     "dataset_name": "...",
     "created_at": "2026-04-29T10:11:12.000000+0000",
-    "schema_version": "0.2.0",
-    "validation_overrides": { ... }
+    "schema_version": "0.3.0",
+    "validation_overrides": { ... },
+    "edge_sources": {
+      "subject_related_to": { "relation": "...", "from_col": "...",
+                              "to_col": "...", "threshold": 0.125,
+                              "metric": "kinship" }
+    }
   },
   "nodes": [
     { "node_id": "sample:S1", "node_type": "Sample",
@@ -68,8 +84,9 @@ Reading a file whose \code{schema_version} shares the installed major
 version loads silently (additive-only differences); a differing major
 version loads with a warning suggesting \code{migrate_dependency_graph_json()}.
 The written JSON also carries a \code{$schema} reference to the formal JSON
-Schema shipped in \code{inst/schema/}; validate a file against it with
-\code{validate_graph_json()}.
+Schema shipped under \code{inst/schema/<schema_version>/}; validate a file
+against it with \code{validate_graph_json()} or by passing
+\code{validate = TRUE} when reading.
 }
 
 \examples{

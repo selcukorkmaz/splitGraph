@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/0.3.0/split_spec.schema.json",
+  "title": "splitGraph split_spec",
+  "description": "On-disk JSON format written by splitGraph::write_split_spec(). A tool-agnostic, sample-level split specification for leakage-aware evaluation. Schema version 0.3.0 (package 0.4.0): adds stratum_var, sample_data[].stratum, and richer metadata provenance. Additive over 0.2.0.",
+  "type": "object",
+  "required": ["splitGraph_object", "schema_version", "group_var", "sample_data"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "splitGraph_object": { "const": "split_spec" },
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "group_var": {
+      "type": "string",
+      "description": "Name of the sample_data column holding the primary grouping (normally group_id)."
+    },
+    "block_vars": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "sample_data columns that carry blocking annotations (batch_group, study_group, site_group, region_group, platform_group, assay_group). Empty when none apply."
+    },
+    "time_var": {
+      "type": ["string", "null"],
+      "description": "sample_data column holding the ordering rank (order_rank), or null when no ordering was derived."
+    },
+    "stratum_var": {
+      "type": ["string", "null"],
+      "description": "sample_data column holding the stratum annotation (stratum), or null when no outcome is attached to the samples. A stratum is an annotation of the outcome level each sample carries, not a stratified split."
+    },
+    "ordering_required": { "type": "boolean" },
+    "constraint_mode": { "type": ["string", "null"] },
+    "constraint_strategy": { "type": ["string", "null"] },
+    "recommended_resampling": { "type": ["string", "null"] },
+    "metadata": {
+      "type": "object",
+      "description": "Derivation provenance. Vector-valued fields are always arrays, even with one element.",
+      "properties": {
+        "graph_name": { "type": ["string", "null"] },
+        "dataset_name": { "type": ["string", "null"] },
+        "source_mode": { "type": ["string", "null"] },
+        "source_strategy": { "type": ["string", "null"] },
+        "relations_used": { "type": "array", "items": { "type": "string" } },
+        "via": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Composite derivations only: dependency sources combined (node types for direct relations, mode names for pairwise relations)."
+        },
+        "priority": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Rule-based composite derivations only: the priority order of modes."
+        },
+        "threshold": {
+          "type": ["number", "null"],
+          "description": "Pairwise derivations only: the threshold applied when the edges were built (kinship minimum or distance maximum), when the graph recorded it."
+        },
+        "threshold_metric": { "type": ["string", "null"] },
+        "splitgraph_version": { "type": ["string", "null"] },
+        "igraph_version": { "type": ["string", "null"] },
+        "derived_at": { "type": ["string", "null"] },
+        "n_samples": { "type": "integer" },
+        "n_groups": { "type": "integer" },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "enriched_from_graph": { "type": "boolean" },
+        "enrichment_warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "sample_data": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sample_row" }
+    }
+  },
+  "$defs": {
+    "sample_row": {
+      "type": "object",
+      "required": ["sample_id", "group_id"],
+      "properties": {
+        "sample_id": { "type": "string" },
+        "sample_node_id": { "type": ["string", "null"] },
+        "group_id": { "type": "string" },
+        "primary_group": { "type": ["string", "null"] },
+        "batch_group": { "type": ["string", "null"] },
+        "study_group": { "type": ["string", "null"] },
+        "site_group": { "type": ["string", "null"] },
+        "region_group": { "type": ["string", "null"] },
+        "platform_group": { "type": ["string", "null"] },
+        "assay_group": { "type": ["string", "null"] },
+        "stratum": { "type": ["string", "null"] },
+        "timepoint_id": { "type": ["string", "null"] },
+        "time_index": { "type": ["number", "null"] },
+        "order_rank": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

@@ -12,20 +12,15 @@
   spatial     = "sample_adjacent_to"
 )
 
-# Build sample-sample projection edges for a pairwise mode, restricted to the
-# in-scope sample node ids. For "spatial" the graph already carries
-# sample-sample edges. For "relatedness" the graph carries subject-subject
-# edges, so we expand them onto samples: two samples are linked when they share
-# a subject (same individual) or when their subjects are directly related.
-.depgraph_pairwise_projection_edges <- function(graph, mode, sample_node_ids) {
+# Edges that connect in-scope samples for a pairwise mode, in a form
+# `.depgraph_sample_components()` can consume without enumerating sample pairs:
+# spatial   -> sample_adjacent_to edges among in-scope samples;
+# relatedness -> sample -> subject edges for in-scope samples plus the
+#                subject_related_to edges (samples of related subjects, and
+#                samples of the same subject, then fall into one component).
+.depgraph_pairwise_component_edges <- function(graph, mode, sample_node_ids) {
   relation <- .depgraph_pairwise_relation[[mode]]
   edge_data <- graph$edges$data
-
-  empty <- data.frame(
-    sample_node_id_1 = character(),
-    sample_node_id_2 = character(),
-    stringsAsFactors = FALSE
-  )
 
   if (identical(mode, "spatial")) {
     e <- edge_data[
@@ -35,56 +30,24 @@
       c("from", "to"),
       drop = FALSE
     ]
-    if (nrow(e) == 0L) return(empty)
-    return(unique(data.frame(
-      sample_node_id_1 = e$from,
-      sample_node_id_2 = e$to,
-      stringsAsFactors = FALSE
-    )))
+    row.names(e) <- NULL
+    return(e)
   }
 
-  # relatedness: sample -> subject for in-scope samples.
   belongs <- edge_data[
-    edge_data$edge_type == "sample_belongs_to_subject" &
-      edge_data$from %in% sample_node_ids,
+    edge_data$edge_type == "sample_belongs_to_subject" & edge_data$from %in% sample_node_ids,
     c("from", "to"),
     drop = FALSE
   ]
-  if (nrow(belongs) == 0L) return(empty)
-
-  samples_of_subject <- split(belongs$from, belongs$to)
-  parts <- list()
-
-  # within-subject: samples from the same individual are always grouped.
-  for (subject in names(samples_of_subject)) {
-    s <- unique(samples_of_subject[[subject]])
-    if (length(s) >= 2L) {
-      cmb <- utils::combn(s, 2L)
-      parts[[length(parts) + 1L]] <- data.frame(
-        sample_node_id_1 = cmb[1L, ],
-        sample_node_id_2 = cmb[2L, ],
-        stringsAsFactors = FALSE
-      )
-    }
-  }
-
-  # across related subjects (undirected subject_related_to edges).
-  rel_edges <- edge_data[edge_data$edge_type == relation, c("from", "to"), drop = FALSE]
-  for (i in seq_len(nrow(rel_edges))) {
-    sa <- samples_of_subject[[rel_edges$from[[i]]]]
-    sb <- samples_of_subject[[rel_edges$to[[i]]]]
-    if (length(sa) > 0L && length(sb) > 0L) {
-      grid <- expand.grid(a = sa, b = sb, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
-      parts[[length(parts) + 1L]] <- data.frame(
-        sample_node_id_1 = grid$a,
-        sample_node_id_2 = grid$b,
-        stringsAsFactors = FALSE
-      )
-    }
-  }
-
-  if (length(parts) == 0L) return(empty)
-  unique(do.call(rbind, parts))
+  related <- edge_data[edge_data$edge_type == relation, c("from", "to"), drop = FALSE]
+  # Keep only relatedness edges whose BOTH subjects carry in-scope samples. A
+  # subject with no in-scope samples must not act as a bridge (P1 ~ P2 ~ P3 with
+  # P2 sample-less does not group P1's and P3's samples), matching the pairwise
+  # semantics the mode has always had and the subset rule used by composite mode.
+  related <- related[related$from %in% belongs$to & related$to %in% belongs$to, , drop = FALSE]
+  e <- rbind(belongs, related)
+  row.names(e) <- NULL
+  e
 }
 
 .derive_pairwise_constraints <- function(graph, mode, samples = NULL) {
@@ -92,26 +55,10 @@
   sample_nodes <- .depgraph_constraint_samples(graph, samples)
   keep_ids <- sample_nodes$node_id
 
-  projection <- .depgraph_pairwise_projection_edges(graph, mode, keep_ids)
-
-  subset_graph <- if (nrow(projection) == 0L) {
-    igraph::make_empty_graph(n = length(keep_ids), directed = FALSE)
-  } else {
-    igraph::graph_from_data_frame(
-      d = data.frame(
-        from = projection$sample_node_id_1,
-        to = projection$sample_node_id_2,
-        stringsAsFactors = FALSE
-      ),
-      vertices = data.frame(name = keep_ids, stringsAsFactors = FALSE),
-      directed = FALSE
-    )
-  }
-  igraph::V(subset_graph)$name <- keep_ids
-
-  comps <- igraph::components(subset_graph)
-  membership_idx <- as.integer(comps$membership[keep_ids])
-  component_size <- as.integer(comps$csize[membership_idx])
+  component_edges <- .depgraph_pairwise_component_edges(graph, mode, keep_ids)
+  comps <- .depgraph_sample_components(keep_ids, component_edges)
+  membership_idx <- comps$membership
+  component_size <- comps$size
 
   sample_map <- data.frame(
     sample_id = sample_nodes$node_key,
@@ -129,12 +76,10 @@
 
   warnings <- character()
   if (identical(mode, "relatedness")) {
-    linked_samples <- unique(c(projection$sample_node_id_1, projection$sample_node_id_2))
-    without_subject <- setdiff(
+    missing_subject <- setdiff(
       keep_ids,
       graph$edges$data$from[graph$edges$data$edge_type == "sample_belongs_to_subject"]
     )
-    missing_subject <- intersect(keep_ids, without_subject)
     if (length(missing_subject) > 0L) {
       warnings <- c(warnings, paste0(
         "Samples without a subject assignment were retained as singleton groups ",
@@ -165,8 +110,10 @@
       relations_used = relation,
       n_groups = length(unique(sample_map$group_id)),
       n_samples = nrow(sample_map),
-      warnings = warnings,
-      projection_edges = projection
+      n_dependency_edges = nrow(component_edges),
+      threshold = as.numeric(graph$metadata$edge_sources[[relation]]$threshold %||% NA_real_),
+      threshold_metric = as.character(graph$metadata$edge_sources[[relation]]$metric %||% NA_character_),
+      warnings = warnings
     )
   )
 }
@@ -193,8 +140,11 @@
 #' and edge sets in \code{build_dependency_graph()}. The passing metric value is
 #' carried on each edge as an attribute (\code{kinship} / \code{distance}).
 #'
-#' @param pairs A data.frame of subject pairs with two id columns and a metric
-#'   column.
+#' @param pairs Either a data.frame of subject pairs with two id columns and a
+#'   metric column (the long format written by KING, GCTA, and most kinship
+#'   tools), or a square symmetric numeric matrix whose row names are subject
+#'   ids (e.g. PLINK \code{--make-rel square} output); a matrix is expanded to
+#'   its upper-triangle pairs before thresholding.
 #' @param threshold Minimum kinship value (inclusive) for a pair to be kept.
 #' @param id1,id2 Column names in \code{pairs} holding the two subject ids.
 #' @param kinship Column name in \code{pairs} holding the kinship / relatedness
@@ -223,7 +173,10 @@
 #' @name pairwise_edges
 #' @export
 relatedness_edges_from_kinship <- function(pairs, threshold, id1 = "id1", id2 = "id2", kinship = "kinship") {
-  .depgraph_assert(is.data.frame(pairs), "`pairs` must be a data.frame.")
+  if (is.matrix(pairs)) {
+    pairs <- .depgraph_kinship_matrix_to_pairs(pairs, id1 = id1, id2 = id2, kinship = kinship)
+  }
+  .depgraph_assert(is.data.frame(pairs), "`pairs` must be a data.frame or a square kinship matrix.")
   .depgraph_assert(length(threshold) == 1L && is.numeric(threshold) && !is.na(threshold),
                    "`threshold` must be a single numeric value.")
   for (col in c(id1, id2, kinship)) {
@@ -241,15 +194,54 @@ relatedness_edges_from_kinship <- function(pairs, threshold, id1 = "id1", id2 = 
     kinship = value[keep],
     stringsAsFactors = FALSE
   )
-  if (nrow(kept) == 0L) return(graph_edge_set())
+  out <- if (nrow(kept) == 0L) {
+    graph_edge_set(source = list(relation = "subject_related_to", from_col = "from_id", to_col = "to_id"))
+  } else {
+    create_edges(
+      kept,
+      from_col = "from_id", to_col = "to_id",
+      from_type = "Subject", to_type = "Subject",
+      relation = "subject_related_to",
+      attr_cols = "kinship"
+    )
+  }
+  # Record the threshold on the edge set so the graph (and any derived
+  # split_spec) can report the provenance of the grouping.
+  out$source$threshold <- as.numeric(threshold)
+  out$source$metric <- "kinship"
+  out
+}
 
-  create_edges(
-    kept,
-    from_col = "from_id", to_col = "to_id",
-    from_type = "Subject", to_type = "Subject",
-    relation = "subject_related_to",
-    attr_cols = "kinship"
+# Convert a square, symmetric kinship / GRM matrix with subject ids as dimnames
+# (e.g. PLINK `--make-rel square`) into the long pair table the edge builder
+# consumes: one row per unordered pair from the upper triangle.
+.depgraph_kinship_matrix_to_pairs <- function(mat, id1, id2, kinship) {
+  .depgraph_assert(
+    is.numeric(mat) && nrow(mat) == ncol(mat),
+    "A kinship matrix must be square and numeric."
   )
+  ids <- rownames(mat) %||% colnames(mat)
+  .depgraph_assert(
+    !is.null(ids) && length(ids) == nrow(mat) && all(nzchar(ids)),
+    "A kinship matrix must carry subject ids as row (or column) names."
+  )
+  if (!is.null(colnames(mat)) && !identical(colnames(mat), ids)) {
+    .depgraph_assert(
+      setequal(colnames(mat), ids),
+      "Row and column names of a kinship matrix must refer to the same subjects."
+    )
+    mat <- mat[, ids, drop = FALSE]
+  }
+  hit <- which(upper.tri(mat), arr.ind = TRUE)
+  hit <- hit[order(hit[, 1L], hit[, 2L]), , drop = FALSE]
+  out <- data.frame(
+    ids[hit[, 1L]],
+    ids[hit[, 2L]],
+    mat[hit],
+    stringsAsFactors = FALSE
+  )
+  names(out) <- c(id1, id2, kinship)
+  out
 }
 
 #' @rdname pairwise_edges
@@ -283,28 +275,37 @@ spatial_edges_from_coords <- function(coords, radius, id = "sample_id", coord_co
   kept <- if (n < 2L) {
     empty
   } else {
+    # Vectorised upper-triangle scan. `which()` drops NA distances; rows are
+    # ordered (i, j) row-major to match the historical edge numbering.
     dmat <- as.matrix(stats::dist(mat))
-    rows <- list()
-    for (i in seq_len(n - 1L)) {
-      for (j in seq(i + 1L, n)) {
-        d <- dmat[i, j]
-        if (!is.na(d) && d <= radius && ids[[i]] != ids[[j]]) {
-          rows[[length(rows) + 1L]] <- data.frame(
-            from_id = ids[[i]], to_id = ids[[j]], distance = d,
-            stringsAsFactors = FALSE
-          )
-        }
-      }
+    hit <- which(dmat <= radius & upper.tri(dmat), arr.ind = TRUE)
+    if (nrow(hit) == 0L) {
+      empty
+    } else {
+      hit <- hit[order(hit[, 1L], hit[, 2L]), , drop = FALSE]
+      i <- hit[, 1L]
+      j <- hit[, 2L]
+      keep <- ids[i] != ids[j]
+      data.frame(
+        from_id = ids[i][keep],
+        to_id = ids[j][keep],
+        distance = dmat[hit][keep],
+        stringsAsFactors = FALSE
+      )
     }
-    if (length(rows) == 0L) empty else do.call(rbind, rows)
   }
-  if (nrow(kept) == 0L) return(graph_edge_set())
-
-  create_edges(
-    kept,
-    from_col = "from_id", to_col = "to_id",
-    from_type = "Sample", to_type = "Sample",
-    relation = "sample_adjacent_to",
-    attr_cols = "distance"
-  )
+  out <- if (nrow(kept) == 0L) {
+    graph_edge_set(source = list(relation = "sample_adjacent_to", from_col = "from_id", to_col = "to_id"))
+  } else {
+    create_edges(
+      kept,
+      from_col = "from_id", to_col = "to_id",
+      from_type = "Sample", to_type = "Sample",
+      relation = "sample_adjacent_to",
+      attr_cols = "distance"
+    )
+  }
+  out$source$threshold <- as.numeric(radius)
+  out$source$metric <- "distance"
+  out
 }

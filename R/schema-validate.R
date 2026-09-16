@@ -6,10 +6,12 @@
 # a handoff file without pulling in a JSON Schema engine.
 
 # Path to a shipped schema file within the installed package (or source tree
-# under pkgload). Returns "" if it cannot be located.
-.depgraph_schema_path <- function(object_type) {
+# under pkgload). Schemas live under a versioned directory so a `$schema`
+# reference in a written file stays valid after later schema bumps. Returns ""
+# if it cannot be located.
+.depgraph_schema_path <- function(object_type, version = .depgraph_schema_version) {
   file <- paste0(object_type, ".schema.json")
-  p <- system.file("schema", file, package = "splitGraph")
+  p <- system.file("schema", version, file, package = "splitGraph")
   if (nzchar(p)) p else ""
 }
 
@@ -43,16 +45,33 @@ print.splitgraph_json_report <- function(x, ...) {
   .depgraph_require_jsonlite()
   .depgraph_assert(is.character(path) && length(path) == 1L && nzchar(path),
                    "`path` must be a single non-empty file path.")
-  .depgraph_assert(file.exists(path), paste0("File not found: ", path))
+  .depgraph_assert(file.exists(path), paste0("File not found: ", path),
+                   class = "splitgraph_io_error", code = "file_not_found")
   tryCatch(
     jsonlite::fromJSON(path, simplifyVector = FALSE),
     error = function(e) {
-      stop("Failed to parse JSON at `", path, "`: ", conditionMessage(e), call. = FALSE)
+      .depgraph_stop(
+        c("Failed to parse JSON at `", path, "`: ", conditionMessage(e)),
+        class = "splitgraph_io_error", code = "json_parse_failure"
+      )
     }
   )
 }
 
 .depgraph_is_string <- function(x) is.character(x) && length(x) == 1L && !is.na(x)
+
+# A parsed JSON value that is either absent/null or a scalar of the given kind.
+.depgraph_is_null_or_string <- function(x) is.null(x) || .depgraph_is_string(x)
+.depgraph_is_null_or_number <- function(x) is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x))
+.depgraph_is_null_or_integer <- function(x) {
+  is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x) && x == trunc(x))
+}
+# JSON objects and arrays both parse to lists, and jsonlite distinguishes them
+# by names even when empty: `{}` has `character(0)` names, `[]` has NULL names.
+# Testing `!is.null(names(x))` therefore separates them in every case, including
+# the empty one (an earlier `length(x) == 0L ||` short-circuit did not).
+.depgraph_is_json_object <- function(x) is.list(x) && !is.null(names(x))
+.depgraph_is_json_array <- function(x) is.list(x) && is.null(names(x))
 
 .depgraph_valid_version <- function(x) {
   .depgraph_is_string(x) && grepl("^[0-9]+\\.[0-9]+\\.[0-9]+$", x)
@@ -100,6 +119,17 @@ validate_graph_json <- function(path) {
   if (!.depgraph_valid_version(parsed$schema_version)) {
     issues <- c(issues, "`schema_version` must be a \"X.Y.Z\" string.")
   }
+  if (!is.null(parsed$metadata)) {
+    if (!.depgraph_is_json_object(parsed$metadata)) {
+      issues <- c(issues, "`metadata` must be a JSON object.")
+    } else {
+      for (field in c("validation_overrides", "edge_sources")) {
+        if (!is.null(parsed$metadata[[field]]) && !.depgraph_is_json_object(parsed$metadata[[field]])) {
+          issues <- c(issues, paste0("metadata.", field, " must be a JSON object."))
+        }
+      }
+    }
+  }
 
   node_rows <- parsed$nodes
   edge_rows <- parsed$edges
@@ -124,6 +154,9 @@ validate_graph_json <- function(path) {
     if (!r$node_type %in% .depgraph_node_types) {
       issues <- c(issues, paste0("node[", i, "]: unknown `node_type` \"", r$node_type, "\"."))
     }
+    if (!is.null(r$attrs) && !.depgraph_is_json_object(r$attrs)) {
+      issues <- c(issues, paste0("node[", i, "]: `attrs` must be a JSON object."))
+    }
   }
 
   valid_edge_types <- .depgraph_edge_schema$edge_type
@@ -136,6 +169,9 @@ validate_graph_json <- function(path) {
     }
     if (!r$edge_type %in% valid_edge_types) {
       issues <- c(issues, paste0("edge[", i, "]: unknown `edge_type` \"", r$edge_type, "\"."))
+    }
+    if (!is.null(r$attrs) && !.depgraph_is_json_object(r$attrs)) {
+      issues <- c(issues, paste0("edge[", i, "]: `attrs` must be a JSON object."))
     }
     if (length(node_ids) > 0L) {
       if (!r$from %in% node_ids) {
@@ -170,15 +206,44 @@ validate_split_spec_json <- function(path) {
   if (!.depgraph_is_string(parsed$group_var)) {
     issues <- c(issues, "`group_var` must be a string.")
   }
-  if (!is.null(parsed$block_vars) && !is.list(parsed$block_vars)) {
+  if (!is.null(parsed$block_vars) &&
+      !(.depgraph_is_json_array(parsed$block_vars) && all(vapply(parsed$block_vars, .depgraph_is_string, logical(1))))) {
     issues <- c(issues, "`block_vars` must be an array of strings.")
+  }
+  for (field in c("time_var", "stratum_var", "constraint_mode", "constraint_strategy", "recommended_resampling")) {
+    if (!.depgraph_is_null_or_string(parsed[[field]])) {
+      issues <- c(issues, paste0("`", field, "` must be a string or null."))
+    }
+  }
+  if (!is.null(parsed$ordering_required) && !(is.logical(parsed$ordering_required) && length(parsed$ordering_required) == 1L)) {
+    issues <- c(issues, "`ordering_required` must be a boolean.")
+  }
+
+  metadata <- parsed$metadata
+  if (!is.null(metadata)) {
+    if (!.depgraph_is_json_object(metadata)) {
+      issues <- c(issues, "`metadata` must be a JSON object.")
+    } else {
+      for (field in .depgraph_split_spec_vector_fields) {
+        if (!is.null(metadata[[field]]) && !.depgraph_is_json_array(metadata[[field]])) {
+          issues <- c(issues, paste0("metadata.", field, " must be an array of strings (even with one element)."))
+        }
+      }
+      if (!.depgraph_is_null_or_number(metadata$threshold)) {
+        issues <- c(issues, "metadata.threshold must be a number or null.")
+      }
+    }
   }
 
   sample_rows <- parsed$sample_data
-  if (is.null(sample_rows) || !is.list(sample_rows)) {
+  if (is.null(sample_rows) || !.depgraph_is_json_array(sample_rows)) {
     issues <- c(issues, "`sample_data` must be an array.")
     sample_rows <- list()
   }
+  string_columns <- c(
+    "sample_node_id", "primary_group", "batch_group", "study_group", "site_group",
+    "region_group", "platform_group", "assay_group", "stratum", "timepoint_id"
+  )
   for (i in seq_along(sample_rows)) {
     r <- sample_rows[[i]]
     if (!.depgraph_is_string(r$sample_id)) {
@@ -186,6 +251,17 @@ validate_split_spec_json <- function(path) {
     }
     if (!.depgraph_is_string(r$group_id)) {
       issues <- c(issues, paste0("sample_data[", i, "]: `group_id` is a required string."))
+    }
+    for (col in string_columns) {
+      if (!.depgraph_is_null_or_string(r[[col]])) {
+        issues <- c(issues, paste0("sample_data[", i, "]: `", col, "` must be a string or null."))
+      }
+    }
+    if (!.depgraph_is_null_or_number(r$time_index)) {
+      issues <- c(issues, paste0("sample_data[", i, "]: `time_index` must be a number or null."))
+    }
+    if (!.depgraph_is_null_or_integer(r$order_rank)) {
+      issues <- c(issues, paste0("sample_data[", i, "]: `order_rank` must be an integer or null."))
     }
   }
 

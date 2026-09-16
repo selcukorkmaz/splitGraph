@@ -33,13 +33,15 @@ test_that("write_dependency_graph + read_dependency_graph round-trip preserves s
   # Same nodes (sorted, comparing structural columns).
   n1 <- g$nodes$data[order(g$nodes$data$node_id), c("node_id", "node_type", "node_key", "label")]
   n2 <- g2$nodes$data[order(g2$nodes$data$node_id), c("node_id", "node_type", "node_key", "label")]
-  row.names(n1) <- NULL; row.names(n2) <- NULL
+  row.names(n1) <- NULL
+  row.names(n2) <- NULL
   expect_identical(n1, n2)
 
   # Same edges (sorted).
   e1 <- g$edges$data[order(g$edges$data$edge_id), c("edge_id", "from", "to", "edge_type")]
   e2 <- g2$edges$data[order(g2$edges$data$edge_id), c("edge_id", "from", "to", "edge_type")]
-  row.names(e1) <- NULL; row.names(e2) <- NULL
+  row.names(e1) <- NULL
+  row.names(e2) <- NULL
   expect_identical(e1, e2)
 
   # Validation status preserved (the rebuilt graph must validate).
@@ -275,4 +277,33 @@ test_that("write_* / read_* error helpfully if jsonlite is missing", {
   # Simulate missing jsonlite without actually unloading it: we test the
   # internal guard directly.
   expect_silent(splitGraph:::.depgraph_require_jsonlite())
+})
+
+test_that("vector metadata fields are always written as JSON arrays", {
+  skip_if_not_installed("jsonlite")
+  # A subject-mode spec has exactly one relation; with auto_unbox this used to
+  # serialize as a bare string, violating the schema (`relations_used` is an
+  # array) and making the JSON type depend on the vector length.
+  meta <- data.frame(
+    sample_id  = c("S1", "S2"),
+    subject_id = c("P1", "P1"),
+    stringsAsFactors = FALSE
+  )
+  g <- graph_from_metadata(meta)
+  spec <- as_split_spec(derive_split_constraints(g, mode = "subject"), graph = g)
+  expect_length(spec$metadata$relations_used, 1L)
+
+  tmp <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp), add = TRUE)
+  write_split_spec(spec, tmp)
+  raw <- jsonlite::fromJSON(tmp, simplifyVector = FALSE)
+
+  expect_type(raw$metadata$relations_used, "list")
+  expect_identical(unlist(raw$metadata$relations_used), "sample_belongs_to_subject")
+  expect_type(raw$metadata$warnings, "list")
+  expect_type(raw$metadata$enrichment_warnings, "list")
+
+  back <- read_split_spec(tmp)
+  expect_identical(back$metadata$relations_used, spec$metadata$relations_used)
+  expect_identical(back$metadata$warnings, character())
 })

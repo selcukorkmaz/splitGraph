@@ -23,7 +23,7 @@ test_that("create_nodes and create_edges build valid core objects", {
   expect_equal(igraph::ecount(as_igraph(graph)), nrow(graph$edges$data))
 })
 
-test_that("compatibility aliases delegate to the primary constructors", {
+test_that("the low-level constructors and the builder agree", {
   meta <- data.frame(
     sample_id = c("S1", "S2"),
     subject_id = c("P1", "P2"),
@@ -31,18 +31,14 @@ test_that("compatibility aliases delegate to the primary constructors", {
   )
 
   samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
-  # The aliases are deprecated as of 0.2.0; deprecation warnings are tested
-  # in test-deprecations.R, so silence them here while we verify delegation.
-  suppressWarnings({
-    subjects <- new_depgraph_nodes(create_nodes(meta, type = "Subject", id_col = "subject_id")$data)
-    edges <- new_depgraph_edges(
-      create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject")$data
-    )
-    full_nodes <- new_depgraph_nodes(rbind(samples$data, subjects$data))
+  subjects <- graph_node_set(create_nodes(meta, type = "Subject", id_col = "subject_id")$data)
+  edges <- graph_edge_set(
+    create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject")$data
+  )
+  full_nodes <- graph_node_set(rbind(samples$data, subjects$data))
 
-    graph <- new_depgraph(nodes = full_nodes, edges = edges)
-    graph2 <- build_depgraph(nodes = list(samples, subjects), edges = list(edges))
-  })
+  graph <- dependency_graph(nodes = full_nodes, edges = edges, graph = NULL)
+  graph2 <- build_dependency_graph(nodes = list(samples, subjects), edges = list(edges))
 
   expect_s3_class(subjects, "graph_node_set")
   expect_s3_class(edges, "graph_edge_set")
