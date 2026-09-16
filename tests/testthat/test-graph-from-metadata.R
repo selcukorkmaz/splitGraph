@@ -85,3 +85,32 @@ test_that("create_nodes accepts a factor identifier column directly", {
   nodes <- create_nodes(data.frame(site_id = factor(c("A", "B", "A"))), "Site", "site_id")
   expect_identical(nodes$data$node_key, c("A", "B"))
 })
+
+test_that("a metadata table with only sample_id yields an edgeless graph", {
+  # `sample_id` is documented as the only required column, so this must build
+  # rather than fail in the edge binder with an internal message.
+  g <- graph_from_metadata(data.frame(sample_id = c("S1", "S2"), stringsAsFactors = FALSE))
+  expect_s3_class(g, "dependency_graph")
+  expect_identical(nrow(g$nodes$data), 2L)
+  expect_identical(nrow(g$edges$data), 0L)
+  expect_true(validate_graph(g)$valid)
+
+  # the rest of the pipeline still works on it
+  con <- derive_split_constraints(g, "subject")
+  expect_length(grouping_vector(con), 2L)
+  spec <- as_split_spec(con, graph = g)
+  expect_s3_class(spec, "split_spec")
+
+  # columns that are not canonical are ignored, not fatal
+  expect_s3_class(
+    graph_from_metadata(data.frame(sample_id = c("S1", "S2"), extra = c(1, 2))),
+    "dependency_graph"
+  )
+
+  skip_if_not_installed("jsonlite")
+  tmp <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp), add = TRUE)
+  write_dependency_graph(g, tmp)
+  expect_true(validate_graph_json(tmp)$valid)
+  expect_identical(nrow(read_dependency_graph(tmp, validate = TRUE)$edges$data), 0L)
+})

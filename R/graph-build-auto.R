@@ -215,7 +215,10 @@ graph_from_metadata.data.frame <- function(meta,
 
   build_dependency_graph(
     nodes = node_sets,
-    edges = edge_sets,
+    # `sample_id` is the only required column, so a table carrying nothing else
+    # is legitimate and must yield an edgeless graph rather than an internal
+    # "non-empty list" error from the binder.
+    edges = if (length(edge_sets) == 0L) list(graph_edge_set()) else edge_sets,
     graph_name = graph_name,
     dataset_name = dataset_name,
     validate = validate,

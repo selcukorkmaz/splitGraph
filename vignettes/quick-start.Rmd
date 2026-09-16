@@ -17,8 +17,10 @@ splitGraph turns a sample-level metadata table into a **typed dependency
 graph**, validates it, derives a **split constraint** (which samples must stay
 on the same side of any train/test split), and emits a tool-agnostic
 **`split_spec`** that downstream resampling tools consume. It never creates
-folds itself. This vignette is the shortest complete path; the other vignettes
-go deeper.
+folds itself.
+
+This is the shortest complete path. Each step links to the vignette that goes
+deeper.
 
 ```{r load}
 library(splitGraph)
@@ -26,15 +28,15 @@ library(splitGraph)
 
 ## 1. A metadata table
 
-One row per sample. Any of the canonical columns below may be present; absent
-ones are skipped.
+One row per sample. Only `sample_id` is required; every other canonical column
+is optional, and absent ones are simply skipped.
 
 ```{r meta}
 meta <- data.frame(
   sample_id    = paste0("S", 1:8),
   subject_id   = c("P1", "P1", "P2", "P2", "P3", "P3", "P4", "P4"),
-  batch_id     = c("B1", "B1", "B1", "B2", "B2", "B2", "B3", "B3"),
-  site_id      = c("NYC", "NYC", "NYC", "BOS", "BOS", "BOS", "BOS", "BOS"),
+  batch_id     = c("B1", "B1", "B2", "B2", "B3", "B3", "B3", "B4"),
+  site_id      = c("NYC", "NYC", "NYC", "NYC", "BOS", "BOS", "BOS", "BOS"),
   timepoint_id = rep(c("T0", "T1"), 4),
   time_index   = rep(c(0, 1), 4),
   outcome_id   = c("case", "case", "ctrl", "ctrl", "case", "case", "ctrl", "ctrl"),
@@ -42,21 +44,31 @@ meta <- data.frame(
 )
 ```
 
-| Canonical column | Creates | Used by mode |
-|---|---|---|
-| `sample_id` (required) | `Sample` nodes | all |
-| `subject_id` | `Subject` + `sample_belongs_to_subject` | `subject`, `relatedness` |
-| `batch_id` | `Batch` + `sample_processed_in_batch` | `batch` |
-| `study_id` | `Study` + `sample_from_study` | `study` |
-| `site_id` | `Site` + `sample_collected_at_site` | `site` |
-| `region_id` | `Region` + `sample_located_in_region` | `region` |
-| `platform_id` | `Platform` + `sample_run_on_platform` | `platform` |
-| `assay_id` | `Assay` + `sample_measured_by_assay` | `assay` |
-| `timepoint_id` (+ `time_index`) | `Timepoint` + `sample_collected_at_timepoint` (+ `timepoint_precedes`) | `time` |
-| `outcome_id` / `outcome_value` | `Outcome` + `sample_has_outcome` | `stratum` annotation |
+Four subjects, two samples each. Note batch `B3`: it holds samples from *two*
+different subjects, which matters in step 3.
 
-Identifier columns may be character, factor, or numeric. Use `columns =` to map
-your own column names onto the canonical ones.
+`graph_from_metadata()` auto-detects these columns:
+
+| Canonical column | Creates | Available as |
+|---|---|---|
+| `sample_id` (required) | `Sample` nodes | every mode |
+| `subject_id` | `Subject` + `sample_belongs_to_subject` | `mode = "subject"`, and the basis of `"relatedness"` |
+| `batch_id` | `Batch` + `sample_processed_in_batch` | `mode = "batch"` |
+| `study_id` | `Study` + `sample_from_study` | `mode = "study"` |
+| `site_id` | `Site` + `sample_collected_at_site` | `mode = "site"` |
+| `region_id` | `Region` + `sample_located_in_region` | `mode = "region"` |
+| `platform_id` | `Platform` + `sample_run_on_platform` | `mode = "platform"` |
+| `assay_id` | `Assay` + `sample_measured_by_assay` | `mode = "assay"` |
+| `timepoint_id` (with `time_index`) | `Timepoint` + `sample_collected_at_timepoint` (+ `timepoint_precedes`) | `mode = "time"`, and `order_rank` |
+| `featureset_id` | `FeatureSet` + `sample_uses_featureset` | not a constraint mode; feeds the shared-provenance advisory and the dependency queries |
+| `outcome_id` or `outcome_value` | `Outcome` + `sample_has_outcome` | the `stratum` annotation |
+
+Identifier columns may be character, factor, or numeric; they are coerced to
+character. If your columns are named differently, map them with `columns =`,
+for example `columns = c(subject_id = "donor", batch_id = "run")`. Relations
+that have no column, such as genetic relatedness or spatial proximity, are
+built from their own helpers and added to the graph; see
+`vignette("modeling-structure")`.
 
 ## 2. Build and validate
 
@@ -66,87 +78,170 @@ g
 validate_graph(g)
 ```
 
-The report lists structural errors (which stop the build), semantic warnings,
-and leakage advisories such as *repeated subject samples*. Nothing here decides
-a split yet; it tells you what structure exists.
+Validation runs three layers, and each issue carries a severity. **Structural**
+problems (a dangling edge, a duplicate id) are errors and stop the build.
+**Semantic** problems (a sample assigned to two subjects, a `time_index` that
+contradicts the precedence edges) are errors or warnings. **Leakage** findings
+are warnings or advisories: a subject appearing in two studies or at two sites
+is a warning, while repeated measures of one subject are an advisory. This
+cohort produces four of those advisories, one per subject, which is exactly the
+structure the split has to respect.
+
+Use `levels =` and `severities =` to narrow the report, and
+`validate_graph(g, error_on_fail = TRUE)` to stop on any error.
+
+Nothing has decided a split yet. The report describes what the data contains.
 
 ## 3. Choose a constraint mode
 
 | Your question | `mode` | What ends up in one group |
 |---|---|---|
 | Same individual measured several times? | `"subject"` | all samples of a subject |
-| Processing batch / plate / run effects? | `"batch"` | all samples of a batch |
+| Processing batch, plate, or run effects? | `"batch"` | all samples of a batch |
 | Several studies or cohorts pooled? | `"study"` | all samples of a study |
 | Multi-centre collection? | `"site"` | all samples of a site |
 | Tissue region, sequencing platform, assay? | `"region"`, `"platform"`, `"assay"` | likewise |
-| Longitudinal, want train-before-test ordering? | `"time"` | samples of a timepoint, plus `order_rank` |
-| Genetic relatives or spatial neighbours (continuous similarity)? | `"relatedness"`, `"spatial"` | connected components over thresholded edges (see `?pairwise_edges`) |
-| Several of the above at once? | `"composite"` | strict: one group per connected component over all chosen relations; rule-based: first available relation in a priority order |
+| Longitudinal, and train must precede test? | `"time"` | samples of a timepoint, plus an `order_rank` |
+| Genetic relatives or spatial neighbours? | `"relatedness"`, `"spatial"` | connected components over thresholded edges; see `?pairwise_edges` |
+| Several of these at once? | `"composite"` | `strict`: one group per connected component over every relation in `via` (any of the above, including the pairwise ones). `rule_based`: the first relation in `priority` that the sample has |
 
-```{r derive}
-constraint <- derive_split_constraints(g, mode = "composite", via = c("subject", "batch"))
-constraint
-head(as.data.frame(constraint), 4)
+Start with the one relation you are most sure about. Here that is the subject:
+
+```{r derive-subject}
+subject_constraint <- derive_split_constraints(g, mode = "subject")
+subject_constraint
+grouping_vector(subject_constraint)
 ```
 
-`grouping_vector()` gives the group per sample as a named vector, the handle
-most tools want:
+`grouping_vector()` returns the group per sample as a named character vector,
+which is the handle most resampling tools want. The full table, with the reason
+each sample landed where it did, is one call away:
 
-```{r grouping}
-grouping_vector(constraint)
+```{r constraint-table}
+head(as.data.frame(subject_constraint)[, c("sample_id", "group_id", "explanation")], 2)
 ```
+
+If more than one relation has to be respected, combine them. Grouping by
+subject *and* batch gives three groups rather than four, because batch `B3`
+links subjects `P3` and `P4`, so they cannot be separated without splitting a
+batch:
+
+```{r derive-composite}
+composite_constraint <- derive_split_constraints(
+  g, mode = "composite", via = c("subject", "batch")
+)
+grouping_vector(composite_constraint)
+```
+
+That is the trade-off to watch: each relation you add can only merge groups,
+never split them. With a few large batches a strict composite can collapse the
+whole cohort into one group, which leaves nothing to hold out.
+`vignette("faq-design-notes")` shows when that happens and what to do instead.
 
 ## 4. Emit the split_spec
 
 ```{r spec}
-spec <- as_split_spec(constraint, graph = g)
+spec <- as_split_spec(subject_constraint, graph = g)
 spec
-validate_split_spec(spec)
 ```
 
 Passing `graph = g` enriches the spec with everything the constraint did not
-use as the primary grouping: blocking columns (`batch_group`, `site_group`,
-...), the ordering (`order_rank`) and the `stratum` annotation from the
-`Outcome` nodes, so a downstream tool can block, order, or stratify without
-touching the graph.
+use as the primary grouping, so a downstream tool can block, order, or
+stratify without ever touching the graph:
 
-```{r spec-columns}
-names(spec$sample_data)
-spec$block_vars
-spec$time_var
-spec$stratum_var
+```{r spec-roles}
+spec$group_var    # the split unit
+spec$block_vars   # coarser axes that ideally should not straddle a fold
+spec$time_var     # ordering, when the graph carries one
+spec$stratum_var  # the outcome level each sample has
 ```
 
-## 5. Hand off
+Those names point into one sample-level table:
 
-Write the spec to JSON for another session, another language, or an archive:
+```{r spec-table}
+as.data.frame(spec)[, c("sample_id", "group_id", "batch_group", "site_group",
+                        "stratum", "order_rank")]
+```
+
+The spec is checked before it leaves R:
+
+```{r spec-validate}
+validate_split_spec(spec)
+```
+
+The `stratum` column is an *annotation*: it records which outcome level each
+sample carries so a consumer can stratify. splitGraph never balances folds
+itself.
+
+## 5. See which leakage paths the choice closes
+
+`summarize_leakage_risks()` folds the graph validation, the constraint, and the
+spec into one object. The `severed` column is the useful part: it says whether
+the mode you picked structurally eliminates each finding.
+
+```{r risks}
+risks <- summarize_leakage_risks(g, constraint = subject_constraint, split_spec = spec)
+risks
+unique(as.data.frame(risks)[, c("category", "severity", "severed")])
+```
+
+## 6. Hand off
+
+Write the spec to JSON for another session, another language, or an archive.
+The format is a versioned contract with a JSON Schema shipped in the package:
 
 ```{r write, eval = requireNamespace("jsonlite", quietly = TRUE)}
 path <- tempfile(fileext = ".json")
 write_split_spec(spec, path)
-validate_split_spec_json(path)
+
+validate_split_spec_json(path)$valid
+
+# Reading with validate = TRUE re-checks the file against the schema and runs
+# the preflight validator, instead of trusting whatever is on disk.
+back <- read_split_spec(path, validate = TRUE)
+identical(back$sample_data$group_id, spec$sample_data$group_id)
 ```
 
-Then consume it. In R with bioLeak:
+In R, the reference consumer is bioLeak, which turns the spec into an
+executable, leakage-audited split plan:
 
 ```{r bioleak, eval = FALSE}
 bioLeak::as_leaksplits(spec, data = my_frame, outcome = "y")
 ```
 
-In Python (the reader ships with the package and needs only the standard
-library):
+The released bioLeak (0.3.8) accepts the `subject`, `batch`, `study` and
+`time` modes. For the others, including `composite`, hand it the grouping
+directly; the split is identical, only the route differs:
+
+```{r bioleak-workaround, eval = FALSE}
+joined <- merge(my_frame, spec$sample_data[, c("sample_id", "group_id")],
+                by = "sample_id")
+bioLeak::make_split_plan(joined, outcome = "y",
+                         mode = "subject_grouped", group = "group_id")
+```
+
+In Python, the reader ships with the package and needs only the standard
+library:
 
 ```python
 from splitspec import load_split_spec
+
 spec = load_split_spec("split_spec.json")
-spec.groups()      # for GroupKFold(groups=...)
-spec.strata()      # for StratifiedGroupKFold(y=...)
-spec.order_ranks() # sort before TimeSeriesSplit
+spec.groups()       # group per sample, for GroupKFold(groups=...)
+spec.strata()       # stratum per sample, for StratifiedGroupKFold(y=...)
+spec.order_ranks()  # sort by this before TimeSeriesSplit
 ```
 
-See `vignette("cross-language-handoff")` for the complete Python path,
-`vignette("adapter-cookbook")` for rsample and base-R adapters, and
-`vignette("faq-design-notes")` for the reasoning behind the design.
+## Where to go next
+
+- `vignette("leakage-aware-workflow")` — the same path in full, with querying,
+  validation overrides, every constraint mode, and graph editing.
+- `vignette("modeling-structure")` — site, region, platform, assay, and the
+  thresholded relatedness and spatial relations.
+- `vignette("cross-language-handoff")` — R to JSON to Python to scikit-learn.
+- `vignette("adapter-cookbook")` — writing your own adapter.
+- `vignette("case-study-gse60424")` — a real public cohort end to end.
+- `vignette("faq-design-notes")` — why the design is shaped this way.
 
 ```{r cleanup, include = FALSE}
 if (exists("path")) unlink(path)
