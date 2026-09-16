@@ -74,7 +74,9 @@ when Bioconductor's \pkg{SummarizedExperiment} is installed) converts
 \code{colData(se)} to a data frame, adds \code{sample_id} from the assay
 column names when \code{colData} has no such column, and dispatches to the
 \code{data.frame} method; \code{columns} maps \code{colData} names to the
-canonical ones exactly as for a data frame.
+canonical ones exactly as for a data frame. A worked example is in
+\code{vignette("faq-design-notes")}; it is kept out of the examples below
+because attaching Bioconductor packages dominates their run time.
 }
 \examples{
 meta <- data.frame(
@@ -88,15 +90,4 @@ meta <- data.frame(
 
 g <- graph_from_metadata(meta, graph_name = "demo")
 g
-
-if (requireNamespace("SummarizedExperiment", quietly = TRUE)) {
-  se <- SummarizedExperiment::SummarizedExperiment(
-    assays = list(counts = matrix(0, nrow = 3, ncol = 4,
-                                  dimnames = list(NULL, meta$sample_id))),
-    colData = meta[, c("subject_id", "batch_id")]
-  )
-  g_se <- graph_from_metadata(se, graph_name = "from-se")
-  identical(grouping_vector(derive_split_constraints(g_se, "subject")),
-            grouping_vector(derive_split_constraints(g, "subject")))
-}
 }

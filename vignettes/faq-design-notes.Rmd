@@ -128,6 +128,38 @@ Balancing is execution and belongs downstream; splitGraph only describes.
   `validate_split_spec_json()` (or `read_*(validate = TRUE)`) check a file
   against the installed schema without a JSON Schema engine.
 
+## Can I build a graph straight from a SummarizedExperiment?
+
+Yes. `graph_from_metadata()` is an S3 generic, and the
+`SummarizedExperiment` method reads `colData()` as the metadata table. When
+`colData` has no `sample_id` column the assay column names are used, so a
+typical Bioconductor object needs no preparation at all. Pass
+`sample_id_col =` to name a different column, and `columns =` to map your own
+names onto the canonical ones exactly as for a data frame.
+
+```{r se, eval = requireNamespace("SummarizedExperiment", quietly = TRUE)}
+meta <- data.frame(
+  sample_id  = c("S1", "S2", "S3", "S4"),
+  subject_id = c("P1", "P1", "P2", "P2"),
+  batch_id   = c("B1", "B2", "B1", "B2"),
+  stringsAsFactors = FALSE
+)
+se <- SummarizedExperiment::SummarizedExperiment(
+  assays  = list(counts = matrix(0, nrow = 3, ncol = 4,
+                                 dimnames = list(NULL, meta$sample_id))),
+  colData = meta[, c("subject_id", "batch_id")]
+)
+
+g_se <- graph_from_metadata(se, graph_name = "from-se")
+grouping_vector(derive_split_constraints(g_se, "subject"))
+
+# identical to building from the data frame directly
+identical(
+  grouping_vector(derive_split_constraints(g_se, "subject")),
+  grouping_vector(derive_split_constraints(graph_from_metadata(meta), "subject"))
+)
+```
+
 ## Which errors can I catch programmatically?
 
 Every error inherits from `splitgraph_error` and carries a `code`; see
