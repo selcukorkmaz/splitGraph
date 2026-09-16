@@ -354,7 +354,8 @@ spec2 <- read_split_spec(spec_path)
 ```
 
 Both formats have a formal JSON Schema (Draft 2020-12) shipped in
-`inst/schema/`, and every written file references it via a `$schema` key.
+`inst/schema/<schema_version>/`, and every written file references it via a
+`$schema` key.
 Validate a handoff file against the contract with `validate_graph_json()` /
 `validate_split_spec_json()`. Each file also carries a `schema_version`; the
 **major** version is the compatibility boundary, so files sharing the

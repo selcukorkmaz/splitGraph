@@ -314,6 +314,17 @@ tabular and `igraph` representations behind it. The summary is useful because
 it tells you exactly which entity types and relation types are present before
 you derive any split rules.
 
+Both representations stay reachable. `graph$nodes` and `graph$edges` are the
+tables; `as_igraph()` hands you the `igraph` object, with `node_type` and
+`node_key` on the vertices and `edge_type` on the edges, so anything igraph can
+compute is available without leaving the typed model:
+
+```{r as-igraph}
+ig <- as_igraph(graph)
+ig
+igraph::vertex_attr_names(ig)
+```
+
 ### Visualize the typed structure
 
 `plot()` renders the graph with a typed, layered layout: `Sample` on top,
@@ -368,6 +379,51 @@ identical(
 )
 ```
 
+`combine_graphs()` is the inverse operation, and the natural way to assemble a
+cohort that arrived in pieces — one graph per batch of metadata, merged once
+they are all in:
+
+```{r graph-combine}
+rejoined <- combine_graphs(
+  subset_graph(graph, samples = c("S1", "S2", "S3")),
+  subset_graph(graph, samples = c("S4", "S5", "S6")),
+  graph_name = "rejoined"
+)
+
+identical(summary(rejoined)$node_types, summary(graph)$node_types)
+identical(
+  grouping_vector(derive_split_constraints(rejoined, mode = "subject")),
+  grouping_vector(derive_split_constraints(graph, mode = "subject"))
+)
+```
+
+`add_edges()` covers the case where a relation only becomes available later.
+Kinship, for instance, arrives as its own matrix rather than as a metadata
+column; once you have it, thresholding it produces an edge set you can attach to
+the graph you already built, and `mode = "relatedness"` becomes available on it:
+
+```{r graph-add-edges}
+kinship_table <- data.frame(
+  id1     = c("P1", "P2"),
+  id2     = c("P2", "P3"),
+  kinship = c(0.25, 0.20),
+  stringsAsFactors = FALSE
+)
+
+graph_with_kinship <- add_edges(
+  graph,
+  relatedness_edges_from_kinship(kinship_table, threshold = 0.1)
+)
+
+summary(graph_with_kinship)$edge_types
+grouping_vector(derive_split_constraints(graph_with_kinship, mode = "relatedness"))
+```
+
+`P1`, `P2` and `P3` form one relatedness component, so the five samples carried
+by those three subjects can no longer be separated; `P4`'s single sample stays
+on its own. The thresholded relations are covered in full further down and in the
+*modeling-structure* vignette.
+
 ### Exporting for other tools
 
 JSON is the interchange contract, but for a look at the graph in Cytoscape,
@@ -402,6 +458,39 @@ That output is the core value proposition of the package in one place:
 
 `valid = TRUE` here means the graph has no errors. It does not mean the dataset
 is free of leakage risk. Warnings and advisories still matter.
+
+The report is a `depgraph_validation_report`: `print()` gives the severity
+roll-up above and `as.data.frame()` the issue table, with one row per finding
+and the node and edge ids it implicates.
+
+Findings arrive on three `level`s. **Structural** and **semantic** rules police
+the graph itself — dangling edges, duplicate ids, an unsupported relation, a
+sample assigned to two subjects, a `time_index` that contradicts the precedence
+edges. The **leakage** layer is the one specific to this package, and it is
+small enough to list in full:
+
+| `code` | Default severity | Fires when |
+|---|---|---|
+| `repeated_subject_samples` | advisory | a subject has more than one sample |
+| `subject_cross_study_overlap` | warning | one subject's samples span several studies |
+| `subject_cross_site_overlap` | warning | one subject's samples span several sites |
+| `per_dataset_featureset` | advisory | a `FeatureSet` node declares `derivation_scope = "per_dataset"` |
+| `shared_featureset_provenance` | advisory | one feature set is used by more than one sample |
+| `missing_time_ordering` | warning | timepoint-linked samples exist with neither `time_index` nor `timepoint_precedes` |
+| `heavy_batch_reuse` | advisory | one batch holds at least half the cohort (minimum 3 samples) |
+
+None of these are errors, because none of them is wrong on its own — a
+longitudinal study is *supposed* to repeat subjects. They are the inputs to the
+split decision, which is why the report describes and does not prescribe.
+
+Pass `levels = "leakage"` to run only that layer, and `severities =` to narrow
+the returned table further:
+
+```{r validation-filter}
+as.data.frame(
+  validate_graph(graph, levels = "leakage", severities = "warning")
+)[, c("severity", "code", "message")]
+```
 
 The package is also intentionally strict about silent failure. If you ask for a
 subset of samples and some of them do not resolve, it errors instead of
@@ -494,8 +583,35 @@ hidden.
 
 ## Query the graph to inspect hidden structure
 
-You can inspect local provenance, trace paths, and project direct sample
-dependencies.
+Seven query functions read the graph without changing it. They all return a
+`graph_query_result`, so `as.data.frame()` gives you a tidy table in every case.
+Five of them work on the typed graph itself:
+
+| Function | Answers |
+|---|---|
+| `query_node_type()` | which nodes of a given type exist |
+| `query_edge_type()` | which edges of a given relation exist, optionally around given nodes |
+| `query_neighbors()` | what a node is directly attached to |
+| `query_paths()` | *every* simple route between two nodes |
+| `query_shortest_paths()` | the shortest such route |
+
+and two project the graph down to samples — `detect_shared_dependencies()` and
+`detect_dependency_components()` — which is what the splitting question actually
+asks.
+
+Start with the inventory queries. They are the fastest way to check that the
+graph contains what you think it contains:
+
+```{r inventory-queries}
+as.data.frame(query_node_type(graph, "Batch"))[, c("node_id", "node_type", "node_key")]
+
+# Which samples went through batch B1?
+as.data.frame(
+  query_edge_type(graph, "sample_processed_in_batch", node_ids = "batch:B1")
+)[, c("edge_id", "from", "to")]
+```
+
+Then inspect local provenance and trace paths.
 
 ```{r neighbors-and-paths}
 neighbors_s1 <- query_neighbors(graph, node_ids = "sample:S1", direction = "out")
@@ -517,6 +633,27 @@ The first query shows everything the graph knows directly about `S1`. The
 second shows that `S1` reaches the subject-level outcome through its subject
 node, which is exactly the kind of relationship that would stay implicit in a
 plain metadata table.
+
+`query_shortest_paths()` returns one route. When the question is *how many
+different ways* two samples are entangled, use `query_paths()`, which enumerates
+every simple path. Setting `mode = "all"` ignores edge direction — dependency
+edges point from the sample outwards, so any sample-to-sample route has to
+traverse one of them backwards — and `max_length = 2` restricts the answer to
+dependencies shared one hop away:
+
+```{r all-paths}
+s1_to_s6 <- query_paths(graph, from = "sample:S1", to = "sample:S6",
+                        mode = "all", max_length = 2)
+s1_to_s6
+as.data.frame(s1_to_s6)[, c("path_id", "step", "node_id", "node_type")]
+```
+
+Three separate routes connect `S1` and `S6`: the batch, the assay, and the
+feature set. A single shared column would have shown you one of them.
+`max_length` defaults to a finite cap of 8 edges so that a dense graph cannot
+make the enumeration explode; when a returned path sits at the cap, the result
+records `metadata$truncated = TRUE` to say longer routes may have been
+suppressed. Pass `max_length = Inf` to search exhaustively.
 
 ```{r projected-dependencies}
 shared_dependencies <- detect_shared_dependencies(
@@ -696,6 +833,17 @@ head(subject_then_block_by_site$sample_data[, c("sample_id", "group_id", "site_g
 
 Samples assigned to more than one site are rejected rather than silently
 resolved, by both `validate_graph()` and `derive_split_constraints(mode = "site")`.
+
+Validation also watches the other direction. Subject `P3` above contributed `S5`
+at `NYC` and `S6` at `BOS`, so a site-grouped split would separate two samples
+from the same person — the mirror image of the cross-study overlap seen earlier,
+and the reason to read the validation report before committing to a mode:
+
+```{r site-validation}
+as.data.frame(validate_graph(site_graph))[
+  , c("severity", "code", "message")
+]
+```
 
 ### Region
 
@@ -914,8 +1062,8 @@ split_spec$stratum_var
 ## Summarize the leakage picture in one object
 
 The final helper combines graph validation, constraint diagnostics, and
-split-spec readiness into one summary object. Crucially, when you pass the
-`constraint` you chose, the summary reports a `severed` column: whether that
+split-spec readiness into one `leakage_risk_summary` object. Crucially, when
+you pass the `constraint` you chose, it reports a `severed` column: whether that
 constraint **structurally eliminates** each leakage path (`TRUE`), leaves it
 open (`FALSE`), or is not applicable (`NA`, e.g. for informational split-spec
 rows).
@@ -934,12 +1082,16 @@ as.data.frame(risk_summary)[, c("source", "severity", "category", "severed", "me
 Read the `severed` column against the constraint you actually chose. Here the
 strict composite constraint (`via = c("Subject", "Batch")`) severs the subject,
 cross-study, and batch-reuse risks (`TRUE`) because those samples are forced
-into the same group — but it does **not** address `missing_time_ordering` or
+into the same group — but it does **not** address `per_dataset_featureset` or
 `shared_featureset_provenance` (`FALSE`), which are orthogonal to a
-subject/batch grouping. That distinction is the point: the summary tells you
-which of your surfaced risks your split design has actually handled, and which
-still need attention (a different mode, a blocking variable, or a data fix) —
-so the leakage trade-off is explicit before any model is trained.
+subject/batch grouping: every sample shares `FS_GLOBAL`, so no grouping of
+samples can undo a feature set that was fitted on the whole cohort. The
+`NA` rows are the constraint and split-spec diagnostics, which describe
+readiness rather than a leakage path. That distinction is the point: the
+summary tells you which of your surfaced risks your split design has actually
+handled, and which still need attention (a different mode, a blocking variable,
+or a data fix) — so the leakage trade-off is explicit before any model is
+trained.
 
 ## Downstream handoff
 
@@ -989,6 +1141,67 @@ spec_round_trip <- read_split_spec(spec_path, validate = TRUE)
 identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
 
 unlink(spec_path)
+```
+
+The graph itself serialises the same way, which is what you want when the
+consumer needs the *reasoning* and not only the answer — an audit trail, a
+reviewer re-deriving a different mode, or a pipeline that builds the graph once
+and derives several constraints later. `write_dependency_graph()` /
+`read_dependency_graph()` are the pair, and `validate_graph_json()` is the
+file-level check:
+
+```{r serialize-graph, eval = requireNamespace("jsonlite", quietly = TRUE)}
+graph_path <- tempfile(fileext = ".json")
+write_dependency_graph(graph, graph_path)
+
+validate_graph_json(graph_path)$valid
+
+graph_round_trip <- read_dependency_graph(graph_path, validate = TRUE)
+
+# The typed structure survives exactly ...
+identical(as.data.frame(graph$edges), as.data.frame(graph_round_trip$edges))
+identical(summary(graph), summary(graph_round_trip))
+
+# ... and so does everything derived from it.
+identical(
+  grouping_vector(derive_split_constraints(graph_round_trip, mode = "subject")),
+  grouping_vector(subject_constraint)
+)
+identical(
+  as.data.frame(validate_graph(graph)),
+  as.data.frame(validate_graph(graph_round_trip))
+)
+```
+
+One JSON detail is worth knowing: the free-form `attrs` bag on each node is
+written with ordinary JSON semantics, so an attribute that was `NA` in R comes
+back as `NULL` rather than `NA`. Both mean "not recorded" and nothing in
+`splitGraph` reads `attrs` to derive a constraint — node and edge types,
+identifiers and relations, which is what the split logic uses, round-trip
+unchanged.
+
+Both writers stamp the file with the schema version they were produced under and
+a `$schema` URL that points at that exact version, so the reference keeps
+resolving after a later schema bump:
+
+```{r schema-stamp, eval = requireNamespace("jsonlite", quietly = TRUE)}
+on_disk <- jsonlite::fromJSON(graph_path, simplifyVector = FALSE)
+on_disk$schema_version
+sub(".*/schema/", "", on_disk[["$schema"]])
+```
+
+That stamp is what makes an old file readable by a newer splitGraph. When a file
+predates the installed schema, `migrate_dependency_graph_json()` and
+`migrate_split_spec_json()` rewrite it at the current version, filling anything
+introduced since with its default — a missing `split_spec` column becomes `NA`
+rather than an error. Files already current are rewritten unchanged, so the call
+is safe to run unconditionally on an archive:
+
+```{r migrate, eval = requireNamespace("jsonlite", quietly = TRUE)}
+migrated <- migrate_dependency_graph_json(graph_path, tempfile(fileext = ".json"))
+validate_graph_json(migrated)$valid
+
+unlink(c(graph_path, migrated))
 ```
 
 Because the format is a documented, versioned contract, consumers are not

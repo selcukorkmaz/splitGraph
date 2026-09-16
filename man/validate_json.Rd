@@ -22,7 +22,8 @@ A \code{splitgraph_json_report}: a list with \code{valid} (logical),
 \description{
 Check that a JSON file written by \code{write_dependency_graph()} or
 \code{write_split_spec()} conforms to the splitGraph on-disk contract. The
-formal JSON Schemas (Draft 2020-12) ship in \code{inst/schema/} and are
+formal JSON Schemas (Draft 2020-12) ship in
+\code{inst/schema/<schema_version>/} and are
 referenced from the written JSON via the \code{$schema} key; these functions
 apply a dependency-free structural check of the same invariants (required
 fields, value types, node/edge-type enumerations, and referential integrity
