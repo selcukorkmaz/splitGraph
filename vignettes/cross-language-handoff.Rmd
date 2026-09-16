@@ -42,6 +42,7 @@ meta <- data.frame(
   subject_id   = c("P1", "P1", "P2", "P3", "P3"),
   timepoint_id = c("T0", "T1", "T0", "T2", "T0"),
   time_index   = c(0, 1, 0, 2, 0),
+  outcome_id   = c("case", "case", "ctrl", "ctrl", "ctrl"),
   stringsAsFactors = FALSE
 )
 
@@ -64,6 +65,11 @@ report$valid
 
 # The R-side grouping we expect Python to reproduce:
 grouping_vector(constraint)
+
+# The outcome travels with the spec as a stratum annotation, so a consumer can
+# stratify without touching the graph. splitGraph never balances folds itself.
+spec$stratum_var
+spec$sample_data$stratum
 ```
 
 # Read in Python
@@ -84,9 +90,11 @@ from splitspec import load_split_spec
 
 spec = load_split_spec("split_spec.json")
 
-spec.schema_version        # "0.2.0"
+spec.schema_version        # "0.3.0"
 spec.constraint_mode       # "subject"
 spec.recommended_resampling  # "grouped_cv"
+spec.stratum_var           # "stratum"
+spec.strata()              # ['case', 'case', 'ctrl', 'ctrl', 'ctrl']
 
 # Grouping keyed by sample_id — identical to R's grouping_vector():
 spec.grouping()
@@ -128,9 +136,9 @@ if (status == 0 && file.exists(out_path)) {
 }
 ```
 
-The same script also checks `order_rank`, and the package's test suite runs this
-comparison as an automated conformance test (skipped when Python is absent, and
-never on CRAN). The point is that the partition is *decided once* in R and only
+The same script also checks `order_rank` and the `stratum` annotation, and the
+package's test suite runs this comparison as an automated conformance test
+(skipped when Python is absent, and never on CRAN). The point is that the partition is *decided once* in R and only
 *reproduced* elsewhere — the two languages cannot disagree.
 
 # Drive scikit-learn
@@ -151,6 +159,28 @@ for train_idx, test_idx in GroupKFold(n_splits=3).split(X, groups=groups):
     test_groups  = {groups[i] for i in test_idx}
     assert train_groups.isdisjoint(test_groups)  # no subject leaks across
 ```
+
+To keep the outcome balanced across folds *as well as* keeping subjects
+together, use the stratum annotation. The reader has a helper that wires both
+in, so the caller never has to line up the two vectors by hand:
+
+```python
+from sklearn.model_selection import StratifiedGroupKFold
+
+# Explicit form: grouping and stratum come from the same spec, in file order.
+for train_idx, test_idx in StratifiedGroupKFold(n_splits=2).split(
+        X, y=spec.strata(), groups=spec.groups()):
+    ...
+
+# Equivalent one-liner:
+for train_idx, test_idx in spec.stratified_group_kfold(n_splits=2):
+    ...
+```
+
+`strata()` returns the `stratum` column by default and raises if any sample
+lacks one; pass a column name to stratify on something else, such as a blocking
+variable. Specs written before schema 0.3.0 have no stratum, and there
+`spec.stratum_var` is `None`.
 
 For an ordered evaluation (a `mode = "time"` spec), sort by `order_rank` first
 and use `TimeSeriesSplit`:

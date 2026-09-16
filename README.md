@@ -225,6 +225,23 @@ scikit-learn path:
 vignette("cross-language-handoff", package = "splitGraph")
 ```
 
+## Vignettes
+
+| Vignette | What it covers |
+|---|---|
+| **Quick start** | Metadata frame to a JSON `split_spec` in ten minutes, with a table for choosing a constraint mode |
+| **From metadata to leakage-aware split design** | The full workflow end to end: ingestion, validation, querying, every constraint mode, reshaping and exporting a graph, and the handoff |
+| **Modeling site, platform, relatedness, and spatial structure** | The relations added in 0.3.0, thresholded pairwise edges, and combining pairwise with direct relations in one composite |
+| **Cross-language handoff** | R to JSON to Python to scikit-learn, including grouped, stratified, and ordered resampling from the spec alone |
+| **Adapter cookbook** | Three small adapters: base-R leave-one-group-out, and `rsample` grouped and rolling-origin |
+| **Case study: GEO GSE60424** | A real public cohort of 20 donors and seven cell populations, from metadata to a defensible split |
+| **FAQ and design notes** | Why not call the downstream planner directly, when composite grouping over-merges, thresholds and transitive closure, schema versioning, and the condition classes |
+
+```r
+vignette(package = "splitGraph")                      # list them
+vignette("quick-start", package = "splitGraph")       # start here
+```
+
 ## Core Concepts
 
 ### Node types

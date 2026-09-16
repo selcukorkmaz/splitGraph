@@ -260,7 +260,8 @@ adapter is just a thin shim that consumes it.
 
 If the downstream consumer is not in R, write the spec to JSON and let the
 consumer interpret it. The on-disk format is a formal, versioned contract: it
-has a JSON Schema (Draft 2020-12) shipped in `inst/schema/`, each file names it
+has a JSON Schema (Draft 2020-12) shipped in `inst/schema/<schema_version>/`,
+each file names it
 via a `$schema` key, and `validate_split_spec_json()` checks a file against it
 before you consume it.
 

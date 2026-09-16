@@ -61,6 +61,21 @@ grouping_vector(derive_split_constraints(g, mode = "platform"))
 grouping_vector(derive_split_constraints(g, mode = "assay"))
 ```
 
+Site structure also has a validation rule of its own. A subject whose samples
+were collected at more than one site is flagged, because grouping by site alone
+would then place one individual on both sides of a split:
+
+```{r cross-site}
+report <- validate_graph(g)
+report$issues[report$issues$code == "subject_cross_site_overlap",
+              c("severity", "message")]
+
+# Which constraint modes actually sever that path:
+risks <- summarize_leakage_risks(g, constraint = derive_split_constraints(g, "subject"))
+as.data.frame(risks)[as.data.frame(risks)$category == "subject_cross_site_overlap",
+                     c("category", "severed")]
+```
+
 Whatever mode is primary, every detected cluster relation is also carried into
 the `split_spec` as a *blocking annotation*, so a downstream consumer can block
 on site, platform, or assay even when the split unit is something else — here,
@@ -237,6 +252,78 @@ groups:
 grouping_vector(
   derive_split_constraints(g_sp, mode = "spatial", samples = c("S1", "S3"))
 )
+```
+
+A subset is sometimes better expressed as a graph in its own right, for example
+when you want to validate it, plot it, or hand it around. `subset_graph()` does
+that, and it uses the same rule, so the grouping agrees with `samples =`:
+
+```{r subset-graph}
+g_two <- subset_graph(g_sp, samples = c("S1", "S3"), graph_name = "S1 + S3")
+grouping_vector(derive_split_constraints(g_two, mode = "spatial"))
+```
+
+# Combining a pairwise relation with a direct one
+
+Pairwise relations are not a separate world: either of them can be listed in a
+composite `via` alongside the direct relations, and all of them feed the same
+connected-component search. That matters when two different mechanisms each link
+a different pair of samples, and severing only one would leave the other open.
+
+Here relatedness links two subjects that share no batch, while batch links two
+samples from unrelated subjects. Neither relation alone separates the cohort
+correctly; the composite does:
+
+```{r composite-pairwise}
+meta_c <- data.frame(
+  sample_id  = paste0("S", 1:4),
+  subject_id = paste0("P", 1:4),
+  batch_id   = c("B1", "B1", "B2", "B3"),
+  stringsAsFactors = FALSE
+)
+kin <- data.frame(id1 = "P2", id2 = "P3", kinship = 0.25, stringsAsFactors = FALSE)
+
+g_mixed <- build_dependency_graph(
+  list(create_nodes(meta_c, "Sample", "sample_id"),
+       create_nodes(meta_c, "Subject", "subject_id"),
+       create_nodes(meta_c, "Batch", "batch_id")),
+  list(create_edges(meta_c, "sample_id", "subject_id",
+                    "Sample", "Subject", "sample_belongs_to_subject"),
+       create_edges(meta_c, "sample_id", "batch_id",
+                    "Sample", "Batch", "sample_processed_in_batch"),
+       relatedness_edges_from_kinship(kin, threshold = 0.1))
+)
+
+# batch alone: {S1,S2} {S3} {S4}   relatedness alone: {S2,S3}
+grouping_vector(derive_split_constraints(g_mixed, "batch"))
+grouping_vector(derive_split_constraints(g_mixed, "relatedness"))
+
+# combined, the chain S1-S2 (batch) - S3 (kinship) becomes one group:
+mixed <- derive_split_constraints(g_mixed, "composite", via = c("batch", "relatedness"))
+grouping_vector(mixed)
+mixed$metadata$via
+```
+
+Under `strategy = "rule_based"` a pairwise source behaves as a fallback instead:
+a sample takes the first relation in `priority` that gives it a non-singleton
+group, so relations never chain.
+
+Whichever route you take, the threshold that produced the edges is recorded on
+the graph, per relation, and is serialised with it — so a reader of the file can
+see which cut created the grouping:
+
+```{r threshold-provenance}
+g_mixed$metadata$edge_sources$subject_related_to[c("threshold", "metric")]
+```
+
+A spec derived from a *single* pairwise mode also carries that threshold as a
+scalar in its own metadata. A composite spec does not, because several
+relations (each with its own cut) may have contributed; the graph's
+`edge_sources` is the complete record in that case:
+
+```{r threshold-in-spec}
+as_split_spec(derive_split_constraints(g_mixed, "relatedness"),
+              graph = g_mixed)$metadata[c("threshold", "threshold_metric")]
 ```
 
 # Thresholds are inputs, not modeling

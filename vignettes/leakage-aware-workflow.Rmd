@@ -335,6 +335,51 @@ plot(graph, legend_position = "bottomright")
 plot(graph, node_colors = c(Sample = "#000000"))
 ```
 
+Two other views answer different questions. `focus = "sample_projection"` drops
+the dependency nodes and draws only the samples, joined whenever they share a
+dependency of a type in `via`: this is a picture of the grouping a composite
+derivation would produce, and a connected blob is a warning that the split has
+little room left. `focus = "ego"` zooms to one node's neighbourhood, which is
+how you inspect a single subject or batch in a graph too large to read whole.
+
+```{r plot-focus, fig.width = 7, fig.height = 4}
+plot(graph, focus = "sample_projection", via = c("Subject", "Batch"))
+plot(graph, focus = "ego", node = "subject:P1", legend = FALSE)
+```
+
+### Reshaping a graph you already have
+
+You do not have to go back to the node and edge sets to change a graph.
+`subset_graph()` restricts it to a set of samples and keeps the structure those
+samples actually reach; `combine_graphs()` takes the union of several graphs,
+rejecting contradictory definitions of the same node; and `add_edges()` appends
+an edge set, for example one produced later from a kinship table. Each returns
+a new, independently validated graph and leaves its inputs untouched.
+
+```{r graph-edit}
+train_graph <- subset_graph(graph, samples = c("S1", "S2", "S3", "S4"))
+summary(train_graph)$node_types
+
+# Grouping on the subset graph agrees with asking for a subset directly.
+identical(
+  grouping_vector(derive_split_constraints(train_graph, mode = "subject")),
+  grouping_vector(derive_split_constraints(graph, mode = "subject",
+                                           samples = c("S1", "S2", "S3", "S4")))
+)
+```
+
+### Exporting for other tools
+
+JSON is the interchange contract, but for a look at the graph in Cytoscape,
+Gephi, or networkx, `export_graph()` writes GraphML, GML, or flat node and edge
+tables. Attributes are flattened into `attr_*` columns, since those formats
+cannot hold a nested list.
+
+```{r export, eval = FALSE}
+export_graph(graph, "graph.graphml", format = "graphml")
+export_graph(graph, "nodes.csv", format = "nodes_csv")
+```
+
 ## Validate before you split
 
 Validation is where `splitGraph` starts paying off. The graph below is
@@ -835,7 +880,8 @@ split_spec <- as_split_spec(strict_constraint, graph = graph)
 split_spec
 
 as.data.frame(split_spec)[, c(
-  "sample_id", "group_id", "batch_group", "study_group", "timepoint_id", "order_rank"
+  "sample_id", "group_id", "batch_group", "study_group",
+  "stratum", "timepoint_id", "order_rank"
 )]
 
 split_spec_validation <- validate_split_spec(split_spec)
@@ -847,9 +893,23 @@ This translation step is where the package becomes operational for downstream
 evaluation workflows:
 
 - `group_id` carries the split unit
-- `batch_group` and `study_group` are available for blocking
+- `batch_group` and `study_group` are available for blocking, alongside
+  `site_group`, `region_group`, `platform_group` and `assay_group` when the
+  graph carries those relations
 - `order_rank` is available for ordered evaluation
+- `stratum` carries the outcome level each sample has, so a consumer can
+  stratify; it is an annotation only, and `splitGraph` never balances folds
 - the generated object is validated before handoff
+
+The declared roles are readable off the spec itself, which is what an adapter
+keys on rather than guessing column names:
+
+```{r spec-roles}
+split_spec$group_var
+split_spec$block_vars
+split_spec$time_var
+split_spec$stratum_var
+```
 
 ## Summarize the leakage picture in one object
 
@@ -908,10 +968,12 @@ any package that wants to consume a `split_spec` — for example, on top of
 
 If the downstream consumer is in a different R session — or in a different
 language entirely — write the spec (and, if useful, the graph) to JSON. The
-on-disk format has a formal JSON Schema (Draft 2020-12) shipped in
-`inst/schema/`, and each written file references it via a `$schema` key. You can
-validate a handoff file against that contract with `validate_split_spec_json()`
-before consuming it, and `NA` values round-trip as JSON `null`.
+on-disk format has a formal JSON Schema (Draft 2020-12) shipped under
+`inst/schema/<schema_version>/`, and each written file references its own
+version via a `$schema` key, so the reference stays valid after later schema
+bumps. You can validate a handoff file against that contract with
+`validate_split_spec_json()` before consuming it, or ask the reader to do it by
+passing `validate = TRUE`, and `NA` values round-trip as JSON `null`.
 
 ```{r serialize, eval = requireNamespace("jsonlite", quietly = TRUE)}
 spec_path <- tempfile(fileext = ".json")
@@ -920,8 +982,10 @@ write_split_spec(split_spec, spec_path)
 # Validate the file against the shipped JSON Schema.
 validate_split_spec_json(spec_path)$valid
 
-# Round-trip it back into R unchanged.
-spec_round_trip <- read_split_spec(spec_path)
+# Round-trip it back into R unchanged. `validate = TRUE` checks the file
+# against the shipped schema before parsing and runs the preflight validator
+# on the result, failing with a classed error instead of a silent surprise.
+spec_round_trip <- read_split_spec(spec_path, validate = TRUE)
 identical(split_spec$sample_data$group_id, spec_round_trip$sample_data$group_id)
 
 unlink(spec_path)
