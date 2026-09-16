@@ -98,9 +98,29 @@ The reference consumer is [**bioLeak**](https://github.com/selcukorkmaz/bioLeak)
 into an executable, leakage-audited split plan. Because `split_spec` is a
 documented, tool-agnostic contract (with a formal JSON Schema and a Python
 reference consumer), other tools — an `rsample` adapter, the shipped Python
-reader driving scikit-learn — can consume it equally. A contract test
-(`Suggests: bioLeak`, skipped if absent) pins this seam so neither side breaks
-it silently.
+reader driving scikit-learn — can consume it equally.
+
+What each consumer reads today (verified against the released versions):
+
+| Consumer | Reads from `split_spec` | Constraint modes accepted |
+|---|---|---|
+| bioLeak 0.3.8 `as_leaksplits()` | `sample_id`, `group_id`, `batch_group`, `study_group`, `timepoint_id`, `order_rank`; `group_var`, `constraint_mode`, `time_var` | subject, batch, study, time. Every other mode currently **errors** inside bioLeak: site, region, platform, assay, relatedness and spatial are missing from its mode map, and composite maps to a `make_split_plan()` mode whose required arguments the adapter never supplies. Workaround below. |
+| Python `splitspec` reader (shipped in `inst/python`) | every field and column, including `stratum` and the block columns | all |
+| `rsample` (adapter in the cookbook vignette) | `group_id` for `group_vfold_cv()`, `order_rank` for `rolling_origin()`; block columns read for fold auditing | all |
+
+Until bioLeak maps the newer modes, any splitGraph grouping still reaches it in
+one line: join `group_id` onto your observation frame and call
+`make_split_plan()` yourself.
+
+```r
+spec   <- as_split_spec(derive_split_constraints(g, mode = "site"), graph = g)
+joined <- merge(my_data, spec$sample_data[, c("sample_id", "group_id")], by = "sample_id")
+bioLeak::make_split_plan(joined, outcome = "y", mode = "subject_grouped", group = "group_id")
+```
+
+A contract test (`Suggests: bioLeak`, skipped if absent) pins every row of this
+table, including the workaround, so neither side changes it silently; it will
+fail, deliberately, when a bioLeak release starts accepting the newer modes.
 
 ## Installation
 
@@ -352,7 +372,7 @@ citation("splitGraph")
 produces:
 
 > Korkmaz S (2026). *splitGraph: Dataset Dependency Graphs for
-> Leakage-Aware Evaluation*. R package version 0.3.0.
+> Leakage-Aware Evaluation*. R package version 0.4.0.
 > <https://github.com/selcukorkmaz/splitGraph>
 
 ## Contributing

@@ -1,0 +1,153 @@
+---
+title: "Quick start: from a metadata table to a split_spec in ten minutes"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{Quick start: from a metadata table to a split_spec in ten minutes}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+splitGraph turns a sample-level metadata table into a **typed dependency
+graph**, validates it, derives a **split constraint** (which samples must stay
+on the same side of any train/test split), and emits a tool-agnostic
+**`split_spec`** that downstream resampling tools consume. It never creates
+folds itself. This vignette is the shortest complete path; the other vignettes
+go deeper.
+
+```{r load}
+library(splitGraph)
+```
+
+## 1. A metadata table
+
+One row per sample. Any of the canonical columns below may be present; absent
+ones are skipped.
+
+```{r meta}
+meta <- data.frame(
+  sample_id    = paste0("S", 1:8),
+  subject_id   = c("P1", "P1", "P2", "P2", "P3", "P3", "P4", "P4"),
+  batch_id     = c("B1", "B1", "B1", "B2", "B2", "B2", "B3", "B3"),
+  site_id      = c("NYC", "NYC", "NYC", "BOS", "BOS", "BOS", "BOS", "BOS"),
+  timepoint_id = rep(c("T0", "T1"), 4),
+  time_index   = rep(c(0, 1), 4),
+  outcome_id   = c("case", "case", "ctrl", "ctrl", "case", "case", "ctrl", "ctrl"),
+  stringsAsFactors = FALSE
+)
+```
+
+| Canonical column | Creates | Used by mode |
+|---|---|---|
+| `sample_id` (required) | `Sample` nodes | all |
+| `subject_id` | `Subject` + `sample_belongs_to_subject` | `subject`, `relatedness` |
+| `batch_id` | `Batch` + `sample_processed_in_batch` | `batch` |
+| `study_id` | `Study` + `sample_from_study` | `study` |
+| `site_id` | `Site` + `sample_collected_at_site` | `site` |
+| `region_id` | `Region` + `sample_located_in_region` | `region` |
+| `platform_id` | `Platform` + `sample_run_on_platform` | `platform` |
+| `assay_id` | `Assay` + `sample_measured_by_assay` | `assay` |
+| `timepoint_id` (+ `time_index`) | `Timepoint` + `sample_collected_at_timepoint` (+ `timepoint_precedes`) | `time` |
+| `outcome_id` / `outcome_value` | `Outcome` + `sample_has_outcome` | `stratum` annotation |
+
+Identifier columns may be character, factor, or numeric. Use `columns =` to map
+your own column names onto the canonical ones.
+
+## 2. Build and validate
+
+```{r build}
+g <- graph_from_metadata(meta, graph_name = "quick-start")
+g
+validate_graph(g)
+```
+
+The report lists structural errors (which stop the build), semantic warnings,
+and leakage advisories such as *repeated subject samples*. Nothing here decides
+a split yet; it tells you what structure exists.
+
+## 3. Choose a constraint mode
+
+| Your question | `mode` | What ends up in one group |
+|---|---|---|
+| Same individual measured several times? | `"subject"` | all samples of a subject |
+| Processing batch / plate / run effects? | `"batch"` | all samples of a batch |
+| Several studies or cohorts pooled? | `"study"` | all samples of a study |
+| Multi-centre collection? | `"site"` | all samples of a site |
+| Tissue region, sequencing platform, assay? | `"region"`, `"platform"`, `"assay"` | likewise |
+| Longitudinal, want train-before-test ordering? | `"time"` | samples of a timepoint, plus `order_rank` |
+| Genetic relatives or spatial neighbours (continuous similarity)? | `"relatedness"`, `"spatial"` | connected components over thresholded edges (see `?pairwise_edges`) |
+| Several of the above at once? | `"composite"` | strict: one group per connected component over all chosen relations; rule-based: first available relation in a priority order |
+
+```{r derive}
+constraint <- derive_split_constraints(g, mode = "composite", via = c("subject", "batch"))
+constraint
+head(as.data.frame(constraint), 4)
+```
+
+`grouping_vector()` gives the group per sample as a named vector, the handle
+most tools want:
+
+```{r grouping}
+grouping_vector(constraint)
+```
+
+## 4. Emit the split_spec
+
+```{r spec}
+spec <- as_split_spec(constraint, graph = g)
+spec
+validate_split_spec(spec)
+```
+
+Passing `graph = g` enriches the spec with everything the constraint did not
+use as the primary grouping: blocking columns (`batch_group`, `site_group`,
+...), the ordering (`order_rank`) and the `stratum` annotation from the
+`Outcome` nodes, so a downstream tool can block, order, or stratify without
+touching the graph.
+
+```{r spec-columns}
+names(spec$sample_data)
+spec$block_vars
+spec$time_var
+spec$stratum_var
+```
+
+## 5. Hand off
+
+Write the spec to JSON for another session, another language, or an archive:
+
+```{r write, eval = requireNamespace("jsonlite", quietly = TRUE)}
+path <- tempfile(fileext = ".json")
+write_split_spec(spec, path)
+validate_split_spec_json(path)
+```
+
+Then consume it. In R with bioLeak:
+
+```{r bioleak, eval = FALSE}
+bioLeak::as_leaksplits(spec, data = my_frame, outcome = "y")
+```
+
+In Python (the reader ships with the package and needs only the standard
+library):
+
+```python
+from splitspec import load_split_spec
+spec = load_split_spec("split_spec.json")
+spec.groups()      # for GroupKFold(groups=...)
+spec.strata()      # for StratifiedGroupKFold(y=...)
+spec.order_ranks() # sort before TimeSeriesSplit
+```
+
+See `vignette("cross-language-handoff")` for the complete Python path,
+`vignette("adapter-cookbook")` for rsample and base-R adapters, and
+`vignette("faq-design-notes")` for the reasoning behind the design.
+
+```{r cleanup, include = FALSE}
+if (exists("path")) unlink(path)
+```

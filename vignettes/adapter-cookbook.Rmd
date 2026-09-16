@@ -54,9 +54,9 @@ workflow can use:
 3. An **`rsample::rolling_origin()`** adapter for ordered evaluation keyed
    to `order_rank`.
 
-Adapters 2 and 3 show idiomatic glue but are not evaluated in this
-vignette so that `splitGraph` does not pick up `rsample` as a build-time
-dependency.
+Adapters 2 and 3 are evaluated when `rsample` is installed (it is in
+`Suggests`, never in `Imports`: `splitGraph` itself has no resampling
+dependency) and shown as code otherwise.
 
 The same pattern works for any other resampling library you happen to use.
 
@@ -174,7 +174,7 @@ Grouped CV keyed to `group_id`. The downstream package would typically
 ship something like this; the adapter is short enough that you can paste
 it into your own analysis script.
 
-```{r adapter-rsample-group, eval=FALSE}
+```{r adapter-rsample-group, eval = requireNamespace("rsample", quietly = TRUE)}
 spec_to_group_vfold <- function(spec, observation_data,
                                 v = NULL,
                                 sample_id_col = "sample_id") {
@@ -205,12 +205,21 @@ right default when `splitGraph` has already grouped samples by their
 deepest leakage-relevant unit (e.g. subject). Pick a smaller `v` for
 k-fold-style grouped CV.
 
+```{r adapter-rsample-group-run, eval = requireNamespace("rsample", quietly = TRUE)}
+grouped <- spec_to_group_vfold(spec, obs)
+grouped
+# Every assessment set is exactly one subject's samples:
+vapply(grouped$splits, function(s) {
+  paste(sort(unique(rsample::assessment(s)$group_id)), collapse = ", ")
+}, character(1))
+```
+
 ## Adapter 3 — `rsample::rolling_origin()`
 
 When `spec$ordering_required` is `TRUE` (or `spec$time_var` is set), the
 right downstream object is an ordered split rather than a grouped one.
 
-```{r adapter-rsample-rolling, eval=FALSE}
+```{r adapter-rsample-rolling, eval = requireNamespace("rsample", quietly = TRUE)}
 spec_to_rolling_origin <- function(spec, observation_data,
                                    sample_id_col = "sample_id",
                                    initial = NULL,
@@ -233,6 +242,15 @@ spec_to_rolling_origin <- function(spec, observation_data,
   if (is.null(initial)) initial <- max(1L, floor(nrow(ordered) * 0.6))
   rsample::rolling_origin(ordered, initial = initial, assess = assess)
 }
+```
+
+```{r adapter-rsample-rolling-run, eval = requireNamespace("rsample", quietly = TRUE)}
+rolling <- spec_to_rolling_origin(spec, obs, initial = 3, assess = 1)
+rolling
+# Each analysis set precedes its assessment set in order_rank:
+vapply(rolling$splits, function(s) {
+  max(rsample::analysis(s)$order_rank) <= min(rsample::assessment(s)$order_rank)
+}, logical(1))
 ```
 
 The key idea: `splitGraph` puts ordering information on the spec; the

@@ -1,0 +1,155 @@
+---
+title: "FAQ and design notes"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{FAQ and design notes}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(splitGraph)
+```
+
+## Why not just call `make_split_plan(group = , batch = )` directly?
+
+For a dataset with one subject column and one batch column you should: bioLeak's
+`make_split_plan()` reaches the same grouping in one call, and splitGraph adds a
+hop. splitGraph earns its place when the structure is not one clean column per
+axis:
+
+- **Validation before splitting.** A sample linked to two subjects, a subject
+  that appears in two studies or at two sites, a `time_index` that contradicts
+  `timepoint_precedes`: `validate_graph()` reports these before any fold exists.
+  Column-based grouping silently produces folds from inconsistent metadata.
+- **Composite semantics.** `mode = "composite"` merges samples into connected
+  components over *all* chosen relations. bioLeak's `combined` mode instead
+  picks a primary axis and deletes training rows sharing a secondary level with
+  the test set. Same metadata, different partitions; splitGraph makes the choice
+  explicit and reproducible.
+- **Pairwise relations.** Genetic relatedness and spatial adjacency are graded
+  properties of *pairs*, not categories. `relatedness_edges_from_kinship()` and
+  `spatial_edges_from_coords()` threshold them into edges and the derivation
+  takes connected components. No categorical column can express this.
+- **Provenance and interchange.** The `split_spec` records which relations,
+  thresholds and strategy produced each group, and travels as schema-checked
+  JSON to Python or any other consumer.
+
+## When does composite-strict over-merge?
+
+Strict composite grouping is transitive closure. If sample A shares a subject
+with B, and B shares a batch with C, then A, B and C land in one group even
+though A and C share nothing directly. With a few large batches this collapses
+most of the dataset into one component:
+
+```{r overmerge}
+meta <- data.frame(
+  sample_id  = paste0("S", 1:6),
+  subject_id = c("P1", "P1", "P2", "P2", "P3", "P3"),
+  batch_id   = c("B1", "B2", "B2", "B3", "B3", "B1"),
+  stringsAsFactors = FALSE
+)
+g <- graph_from_metadata(meta)
+table(grouping_vector(derive_split_constraints(g, "composite", via = c("subject", "batch"))))
+```
+
+Every subject bridges two batches, so all six samples form a single group and no
+split is possible. Three remedies, in order of preference:
+
+1. Ask whether every relation really *must* be severed. Grouping by subject
+   alone here yields three groups; batch can be handled as a blocking
+   annotation instead (`spec$block_vars`).
+2. Use `strategy = "rule_based"`: each sample is grouped by the first relation
+   in `priority` that is available to it, so relations do not chain.
+3. Use `detect_dependency_components()` to see the component sizes before
+   deriving, and `summarize_leakage_risks()` to see which leakage paths a given
+   mode actually severs (`severed` column).
+
+```{r remedies}
+grouping_vector(derive_split_constraints(g, "composite", strategy = "rule_based",
+                                         via = c("subject", "batch"),
+                                         priority = c("subject", "batch")))
+```
+
+## How do thresholds interact with transitive closure?
+
+`relatedness_edges_from_kinship(pairs, threshold)` keeps a pair when its kinship
+is *at least* the threshold; `spatial_edges_from_coords(coords, radius)` keeps a
+pair when its distance is *at most* the radius. The derivation then forms
+connected components over the kept edges. Two consequences:
+
+- Lowering a kinship threshold (or raising a radius) can only merge groups,
+  never split them, and the merging is not local: a chain of individually
+  just-over-threshold pairs joins its endpoints even if they are unrelated.
+- The threshold is a property of the *edge set*, recorded on it and carried
+  into `graph$metadata$edge_sources` and `spec$metadata$threshold`, so a
+  reader of the spec can see which cut produced the groups.
+
+```{r threshold}
+pairs <- data.frame(id1 = c("P1", "P2"), id2 = c("P2", "P3"), kinship = c(0.26, 0.13))
+meta <- data.frame(sample_id = c("S1", "S2", "S3"), subject_id = c("P1", "P2", "P3"))
+build <- function(threshold) {
+  g <- build_dependency_graph(
+    list(create_nodes(meta, "Sample", "sample_id"), create_nodes(meta, "Subject", "subject_id")),
+    list(create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject"),
+         relatedness_edges_from_kinship(pairs, threshold = threshold))
+  )
+  grouping_vector(derive_split_constraints(g, "relatedness"))
+}
+build(0.25)  # only P1~P2 pass: {S1,S2}, {S3}
+build(0.10)  # P2~P3 also passes and chains: {S1,S2,S3}
+```
+
+## What does the `stratum` column mean, and does splitGraph stratify?
+
+No. `stratum` is an *annotation*: the outcome level attached to each sample
+(from `sample_has_outcome`, or the subject's outcome via `subject_has_outcome`).
+It is exposed through `spec$stratum_var` so a consumer such as scikit-learn's
+`StratifiedGroupKFold` or bioLeak's `stratify = TRUE` can balance folds.
+Balancing is execution and belongs downstream; splitGraph only describes.
+
+## Schema versioning policy, in one place
+
+- `schema_version` (currently `r splitGraph:::.depgraph_schema_version`) is
+  independent of the package version. It describes the on-disk JSON contract.
+- The **major** component is the compatibility boundary. Files sharing the
+  installed major load silently; readers fill fields missing from older files
+  with `NA` and ignore unknown ones. A differing major loads with a warning
+  suggesting `migrate_dependency_graph_json()` / `migrate_split_spec_json()`.
+- Additive changes (a new column, a new metadata field) bump the minor
+  component. Only a rename or a change of meaning would bump the major, and
+  none has happened.
+- The formal JSON Schemas live under `inst/schema/<schema_version>/`, and every
+  written file carries a `$schema` URL pointing at its own version, so the
+  reference stays valid after later bumps. `validate_graph_json()` and
+  `validate_split_spec_json()` (or `read_*(validate = TRUE)`) check a file
+  against the installed schema without a JSON Schema engine.
+
+## Which errors can I catch programmatically?
+
+Every error inherits from `splitgraph_error` and carries a `code`; see
+`?splitgraph_conditions` for the subclasses (`splitgraph_schema_error`,
+`splitgraph_reference_error`, `splitgraph_ambiguity_error`,
+`splitgraph_validation_error`, `splitgraph_io_error`).
+
+```{r conditions}
+g <- graph_from_metadata(data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2")))
+tryCatch(
+  query_neighbors(g, "sample:S9"),
+  splitgraph_reference_error = function(e) e$code
+)
+```
+
+## How large a cohort can splitGraph handle?
+
+Every step is linear in nodes plus edges. The shipped benchmark
+(`inst/bench/pipeline.R`) builds, validates, derives a default composite
+constraint, enriches a spec and writes both JSON files for 20,000 samples in
+seconds on a laptop; `tests/testthat/test-performance.R` fails if any step
+regresses to superlinear behaviour. The one inherently quadratic output is the
+explicit sample-pair table of `detect_shared_dependencies()` and
+`detect_dependency_components()$metadata$projection_edges`, whose size is the
+number of pairs sharing a target; grouping itself never enumerates pairs.

@@ -62,8 +62,17 @@ of Statistical Software*. Because `split_spec` is neutral, other consumers — a
 `rsample` adapter, or the Python reader shipped with `splitGraph` that drives
 `GroupKFold`, `StratifiedGroupKFold`, and `TimeSeriesSplit` — can use it
 equally. A conformance test asserts that the Python reader recovers exactly the
-grouping and ordering that R emitted, and a contract test pins the seam to
-`bioLeak`.
+grouping, ordering, and stratum annotation that R emitted, and a contract test
+pins the seam to `bioLeak`: the released `bioLeak` reads the grouping,
+batch/study blocking, and ordering columns of a `split_spec` and accepts the
+subject, batch, study, and time modes; the modes added in `splitGraph` 0.3.0
+reach it by handing the derived `group_id` to its split planner directly, until
+`bioLeak` maps them. The contract test documents that boundary explicitly,
+against the installed `bioLeak`, rather than letting it drift. Every step of
+the `splitGraph` pipeline is linear in the number of samples and edges: on a
+synthetic cohort with repeated subjects, batches, five studies, and four
+timepoints, building, validating, deriving a composite constraint, and writing
+the specification for 20,000 samples takes seconds on a laptop.
 
 The novel contributions relative to column-based grouping are: (1) a typed,
 extensible schema of leakage relations, including *pairwise, thresholded*
