@@ -59,9 +59,9 @@ It is transcribed into a grouping vector by hand, once.
 Three consequences follow. The grouping cannot be *validated*: nothing detects
 that a sample was assigned to two subjects, or that a declared time ordering
 contradicts the recorded timepoint sequence. It cannot be *transported*: a
-collaborator working in Python re-derives it from the same messy metadata and
-may not reproduce it. And it cannot be *audited*: a reviewer sees the folds, not
-the reasoning, so "no subject straddles a fold" must be taken on trust.
+collaborator in Python re-derives it from the same messy metadata and may not
+reproduce it. And it cannot be *audited*: a reviewer sees the folds, not the
+reasoning.
 
 `splitGraph` addresses this representation-and-interchange layer. It is aimed at
 analysts who need a leakage-aware split to be inspectable rather than merely
@@ -85,13 +85,12 @@ domain, more capable than anything `splitGraph` offers — they model
 autocorrelation as a continuous field, which `splitGraph` does not attempt.
 
 The distinction is one of layer rather than quality. Those packages produce
-*resamplings*, tied to one dependence family and one modelling framework. None
-of them produces a validated, serialisable description of the dependency
-structure itself, and none is designed to be read outside its host framework or
-language. That is the gap: a researcher whose cohort has repeated subjects *and*
-shared batches *and* genetically related donors has no single object that states
-all of it, checks it for contradictions, and travels to a collaborator's
-scikit-learn pipeline unchanged.
+*resamplings*, tied to one dependence family and one modelling framework, not a
+validated serialisable description of the dependency structure itself, readable
+outside the host framework. That is the gap: a researcher whose cohort has
+repeated subjects *and* shared batches *and* genetically related donors has no
+single object that states all of it, checks it for contradictions, and travels
+to a collaborator's scikit-learn pipeline unchanged.
 
 Contributing this upstream to an existing package was considered and rejected.
 The contribution is framework-agnostic by construction; placing it inside
@@ -106,10 +105,9 @@ ships adapters demonstrating exactly that.
 carry most of the weight.
 
 ![Data flow through splitGraph. A metadata table becomes a typed dependency
-graph, which is validated and then reduced to a split constraint, a split
-specification and a schema-versioned JSON artifact. Everything to the right of
-the dashed line — generating folds, fitting models — belongs to a
-consumer.\label{fig:pipeline}](paper-figures/paper-pipeline.png)
+graph, which is validated and reduced to a split constraint, a split
+specification and a schema-versioned JSON artifact. Everything right of the
+dashed line belongs to a consumer.\label{fig:pipeline}](paper-figures/paper-pipeline.png)
 
 **Typing the graph rather than generalising it.** Nodes and edges are drawn from
 a closed schema of 11 node types and 17 relations, not from arbitrary strings.
@@ -150,14 +148,13 @@ spanning several studies or sites, a feature set fitted on the whole cohort.
 carries one grouping node (subject, batch, study, time, site, region, platform,
 assay). Two are *pairwise and thresholded* — genetic relatedness and spatial
 proximity — where groups form by transitive closure over a similarity graph, a
-partition no single categorical column can express. The eleventh, *composite*,
-combines any of the others, either strictly (one group per connected component)
-or by priority order.
+partition no categorical column can express. The eleventh, *composite*, combines
+any of the others, strictly or by priority order.
 
-**Handoff** attaches everything the constraint did not use as the primary
-grouping: coarser axes as blocking annotations, an ordering rank when the graph
-carries time, and the outcome level each sample holds as a stratum annotation.
-`splitGraph` records that annotation but never balances folds itself.
+**Handoff** attaches what the constraint did not use as the primary grouping:
+coarser axes as blocking annotations, an ordering rank when the graph carries
+time, and each sample's outcome level as a stratum annotation that `splitGraph`
+records but never acts on.
 
 # Example workflow
 
@@ -175,9 +172,9 @@ spec       <- as_split_spec(constraint, graph = g)
 write_split_spec(spec, "split_spec.json")
 ```
 
-`spec` carries the grouping and the declared roles; `grouping_vector(constraint)`
-returns the group per sample for any R resampler. The JSON file is what crosses
-the language boundary, where `X` is the design matrix:
+`grouping_vector(constraint)` returns the group per sample for any R resampler.
+The JSON file is what crosses the language boundary, with `X` the design
+matrix:
 
 ```python
 from splitspec import load_split_spec
@@ -214,26 +211,45 @@ sides of a split.
 
 # AI usage disclosure
 
-Generative AI (Anthropic's Claude, used through Claude Code) assisted
-substantially in the development of this package: refactoring derivation
-routines for linear-time behaviour, extending the type schema, drafting test
-cases, and drafting documentation, vignettes and this manuscript. All
-AI-assisted output was reviewed and accepted by the author, who takes full
-responsibility for the content and correctness of the software and the paper.
+**Tools.** Anthropic Claude (Claude Opus 5, and earlier Claude models during
+2026), used through the Claude Code command-line interface.
 
-Correctness was verified by mechanisms independent of the drafting process
-rather than by inspection alone: an automated suite of 892 test expectations
-and `R CMD check --as-cran`, run on every change in continuous integration; a
-cross-language conformance test comparing the R and Python implementations on
-the same artifact; and a contract test run against the installed downstream
-consumer. Before release, the refactored derivations were
-additionally checked for equivalence against the previous CRAN version on
-regression cohorts. Every empirical claim in this paper — timings, counts,
-coverage — was measured on the released code rather than estimated.
+**Where used.** Package source code, the test suite, the reference
+documentation and vignettes, and the text of this manuscript.
+
+**Nature and scope of assistance.** Refactoring the derivation routines to
+linear-time algorithms; extending the node and edge type schema; scaffolding
+and drafting test cases; drafting and revising documentation, vignettes and
+this paper; and copy-editing throughout. Assistance was iterative rather than
+wholesale: the model proposed implementations and prose, which were then
+accepted, altered or rejected.
+
+**Confirmation of review.** The author reviewed, edited and validated all
+AI-assisted output, and made the core design decisions himself — the scope
+boundary (deriving constraints but never generating folds), the typed closed
+schema, the decision to make `split_spec` a versioned interchange artifact
+rather than an in-memory object, and the choice to keep the package free of
+resampling dependencies. The author takes full responsibility for the accuracy,
+originality and licensing of the software and the paper.
+
+**Independent verification.** Correctness was checked by mechanisms independent
+of the drafting process: 892 test expectations and `R CMD check --as-cran`; a
+conformance test comparing the R and Python implementations on the same
+artifact; a contract test against the installed downstream consumer; and, before
+release, an equivalence check against the previous CRAN version on regression
+cohorts. Every empirical claim in this paper was measured, not estimated.
+
+# Conflicts of interest and funding
+
+The author develops and maintains `bioLeak`, the R package described above as
+the reference consumer of `split_spec`; the two projects are related by design
+and are cited here as such. The author declares no financial conflicts of
+interest.
+
+The work received no external financial support.
 
 # Acknowledgements
 
-We thank users of the `bioLeak` project for feedback that shaped the
-`split_spec` contract.
+We thank users of `bioLeak` for feedback that shaped the `split_spec` contract.
 
 # References
