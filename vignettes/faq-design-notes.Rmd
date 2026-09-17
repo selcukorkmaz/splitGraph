@@ -128,6 +128,39 @@ Balancing is execution and belongs downstream; splitGraph only describes.
   `validate_split_spec_json()` (or `read_*(validate = TRUE)`) check a file
   against the installed schema without a JSON Schema engine.
 
+The R reader is permissive at that boundary, which is worth seeing rather than
+taking on trust:
+
+```{r schema-major, eval = requireNamespace("jsonlite", quietly = TRUE)}
+tiny <- data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2"),
+                   stringsAsFactors = FALSE)
+g_tiny <- graph_from_metadata(tiny)
+p <- tempfile(fileext = ".json")
+write_split_spec(as_split_spec(derive_split_constraints(g_tiny, "subject"),
+                               graph = g_tiny), p)
+
+# Pretend the file was written by a future splitGraph with a different major.
+raw <- jsonlite::fromJSON(p, simplifyVector = FALSE)
+raw$schema_version <- "1.0.0"
+writeLines(jsonlite::toJSON(raw, auto_unbox = TRUE, null = "null"), p)
+
+back <- withCallingHandlers(
+  read_split_spec(p),
+  warning = function(w) {
+    message("warning: ", conditionMessage(w))
+    invokeRestart("muffleWarning")
+  }
+)
+class(back)
+unlink(p)
+```
+
+One asymmetry to know about if you consume the format outside R: the shipped
+Python reader is *stricter*. Where R warns and loads, `splitspec` raises a
+`ValueError` naming the version and refuses the file, on the grounds that a
+non-interactive consumer is better off failing than silently misreading a format
+it does not know. Both implementations accept every schema sharing major `0`.
+
 ## Can I build a graph straight from a SummarizedExperiment?
 
 Yes. `graph_from_metadata()` is an S3 generic, and the
@@ -177,11 +210,22 @@ tryCatch(
 
 ## How large a cohort can splitGraph handle?
 
-Every step is linear in nodes plus edges. The shipped benchmark
-(`inst/bench/pipeline.R`) builds, validates, derives a default composite
-constraint, enriches a spec and writes both JSON files for 20,000 samples in
-seconds on a laptop; `tests/testthat/test-performance.R` fails if any step
-regresses to superlinear behaviour. The one inherently quadratic output is the
-explicit sample-pair table of `detect_shared_dependencies()` and
+Every step is linear in nodes plus edges. On a 20,000-sample synthetic cohort
+the shipped benchmark (`inst/bench/pipeline.R`) builds the graph, validates it,
+derives a default composite constraint, enriches a spec and writes both JSON
+files in about twelve seconds on a laptop. More than half of that is writing the
+*graph* JSON (~6 s); the specification itself writes in well under a second, and
+the derivation steps are hundredths of a second. If you only need the handoff
+artifact, skip `write_dependency_graph()`.
+
+Two caveats about the guard rail. `tests/testthat/test-performance.R` is a
+wall-clock *budget* at 5,000 samples with deliberately generous limits, not a
+benchmark; only the composite derivation is additionally checked for scaling,
+by timing 1,000 against 4,000 samples and failing if the ratio exceeds 8 (a
+quadratic step would give roughly 16). Other steps could therefore degrade
+somewhat without tripping it.
+
+The one inherently quadratic output is the explicit sample-pair table of
+`detect_shared_dependencies()` and
 `detect_dependency_components()$metadata$projection_edges`, whose size is the
 number of pairs sharing a target; grouping itself never enumerates pairs.
