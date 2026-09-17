@@ -38,8 +38,10 @@ str(gse)
 Three facts about its structure drive everything below:
 
 ```{r facts}
-# 1. Every donor contributed several samples (one per cell population).
+# 1. Every donor contributed six or seven samples, one per cell population
+#    that was successfully sorted for them.
 range(table(gse$subject_id))
+table(table(gse$subject_id))
 # 2. Every donor was collected on its own date, so collection date (the natural
 #    "batch") coincides with donor.
 all(tapply(gse$batch_id, gse$subject_id, function(x) length(unique(x))) == 1)
@@ -74,6 +76,18 @@ g
 summary(g)$node_types
 ```
 
+At 186 nodes this is past the size where drawing the whole graph tells you
+anything. `focus = "ego"` is the view for a graph like this: it zooms to one
+node's neighbourhood, so you can check a single donor's structure instead of
+squinting at the cohort. Two hops out from donor `D20` reach its samples, and
+through them the cell populations, collection date and disease status those
+samples carry:
+
+```{r ego, fig.width = 7.2, fig.height = 5, dpi = 150, out.width = "100%"}
+plot(g, focus = "ego", node = "subject:D20", order = 2,
+     legend_position = "bottomleft")
+```
+
 ## What validation says
 
 ```{r validate}
@@ -82,10 +96,22 @@ report
 summary(report)$by_code
 ```
 
-Twenty `repeated_subject_samples` advisories: every donor is linked to several
-samples, so any split that treats samples as independent will put the same
-person on both sides. No error-severity issue, and no cross-study or cross-site
-overlap, because each donor belongs to exactly one batch and one condition.
+Twenty `repeated_subject_samples` advisories, one per donor: every donor is
+linked to several samples, so any split that treats samples as independent will
+put the same person on both sides. Nothing rises above advisory, and the report
+is short for two different reasons worth separating.
+
+The cross-study and cross-site rules cannot fire because this graph has no
+`Study` or `Site` nodes at all — the CSV carries neither, so those axes simply do
+not exist here. `heavy_batch_reuse` does not fire because no batch holds half
+the cohort: each collection date covers one donor's six or seven samples.
+
+There is also no rule for a donor spanning several *regions*, and in this cohort
+every donor spans six or seven of them. That is deliberate rather than an
+oversight: one person contributing several sorted cell populations is the design
+of the experiment, not an anomaly. The advisory that a donor has several samples
+already carries the leakage signal; which compartments those samples came from
+is information for the split, not a finding against the data.
 
 ## How much would a naive split leak?
 
@@ -122,10 +148,31 @@ canon <- function(x) as.integer(match(x, unique(x)))
 identical(canon(grouping_vector(by_subject)), canon(grouping_vector(by_batch)))
 ```
 
+The region partition is a different animal, and it is worth seeing why it is the
+wrong split unit here even though it is a perfectly valid one. Grouping by cell
+population cuts the cohort *across* donors rather than between them, so every
+donor lands in six or seven different groups — the exact leak the study is
+exposed to:
+
+```{r region-wrong}
+region_groups <- grouping_vector(by_region)
+donor_spread <- tapply(region_groups[gse$sample_id], gse$subject_id,
+                       function(x) length(unique(x)))
+range(donor_spread)
+sum(donor_spread > 1)   # donors split across more than one region group
+```
+
+Which is why region travels on the spec as a blocking annotation below, not as
+`group_var`. The same column can be the right answer or the wrong one depending
+on what has to generalise; the graph makes the difference inspectable rather
+than a matter of taste.
+
 ### Composite grouping and over-merging
 
-Every donor spans every cell population, so a strict composite over subject
-**and** region chains the whole cohort into one component: there is nothing
+Six of the seven cell populations were sorted for all twenty donors. That is
+enough for a strict composite over subject **and** region to chain the entire
+cohort into one component — donor A's B-cells link to every other donor's
+B-cells, which link to their own other populations, and so on until nothing is
 left to split.
 
 ```{r composite}
@@ -134,13 +181,19 @@ strict$metadata$n_groups
 strict$metadata$warnings
 ```
 
-`detect_dependency_components()` shows the component sizes directly, which is
-the quickest way to see this coming before deriving:
+The empty warning vector is the part to notice. One group covering all 134
+samples is a correct answer to the question that was asked, and `splitGraph`
+does not flag it, so on a composite derivation read `metadata$n_groups` yourself
+before going further. `detect_dependency_components()` shows it coming before
+you derive anything:
 
 ```{r components}
 comps <- detect_dependency_components(g, via = c("Subject", "Region"))
-table(comps$table$component_size)
+table(as.data.frame(comps)$component_size)
 ```
+
+A single component of 134 — the cohort has no internal boundary along those two
+relations together.
 
 The rule-based strategy does not chain relations. With subject first in the
 priority order, every sample has a subject, so region is never consulted and
@@ -201,7 +254,7 @@ table(spec_sub$sample_data$stratum)
 ```{r write, eval = requireNamespace("jsonlite", quietly = TRUE)}
 out <- tempfile(fileext = ".json")
 write_split_spec(spec, out)
-validate_split_spec_json(out)
+validate_split_spec_json(out)$valid
 unlink(out)
 ```
 
