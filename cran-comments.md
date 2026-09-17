@@ -32,9 +32,11 @@ expected on CRAN's own systems:
   MiKTeX, unrelated to this package.
 
 `checking CRAN incoming feasibility` passes, and `urlchecker::url_check()`
-reports all nine URLs in the package as valid. No spell-checker was available on
-the machine used for these runs, so the `aspell` check on DESCRIPTION has not
-been exercised locally.
+reports all nine URLs in the package as valid.
+
+A spell check (`spelling::spell_check_package()`) flags exactly one word in
+DESCRIPTION: **inspectable**. It is correctly spelled, and it appears in the
+same position in the Description field of version 0.3.0, which is on CRAN.
 
 ## Reverse dependencies
 
