@@ -10,10 +10,12 @@ tags:
 authors:
   - name: Selcuk Korkmaz
     orcid: 0000-0003-4632-6850
+    corresponding: true
     affiliation: 1
 affiliations:
-  - index: 1
-    name: Department of Biostatistics, Trakya University, Edirne, Turkey
+  - name: Department of Biostatistics, Trakya University, Edirne, Turkey
+    index: 1
+    ror: 00xa0xn82
 date: 17 September 2026
 bibliography: paper.bib
 ---
