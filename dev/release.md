@@ -49,10 +49,13 @@ are also enforced by GitHub Actions; run them locally anyway before tagging.
         NOTE. Put pandoc on PATH (`install.packages("pandoc");
         pandoc::pandoc_install()` gives one, but export its directory on PATH
         for the check subprocess, not just `RSTUDIO_PANDOC`).
-      - The `https://selcukorkmaz.github.io/splitGraph/` URL in DESCRIPTION is
-        a **404 until the pkgdown site is deployed at least once**. Either run
-        the `pkgdown` workflow (and enable GitHub Pages) before submitting, or
-        drop that URL from DESCRIPTION for the submission.
+      - DESCRIPTION's `URL` deliberately lists **only** the GitHub repository.
+        The pkgdown site URL was removed for the 0.4.0 submission because it
+        404s until the site is deployed, and CRAN's incoming check rejects
+        that. Once the `pkgdown` workflow has run and Pages is enabled, add
+        `https://selcukorkmaz.github.io/splitGraph/` back to `URL` and
+        re-roxygenise. `_pkgdown.yml` keeps its own `url:` either way, so the
+        site builds correctly in the meantime.
 - [ ] `Rscript -e 'lintr::lint_package()'` reports 0 findings (the committed
       `.lintr` is calibrated so it is a real gate, not noise).
 - [ ] pkgdown site builds: `pkgdown::build_site(install = FALSE)` with the
@@ -84,13 +87,11 @@ are also enforced by GitHub Actions; run them locally anyway before tagging.
 
 ## 5. Ship
 
-- [ ] **Push the branch first, and let the `pkgdown` workflow finish.** The
-      DESCRIPTION `URL` field advertises
-      `https://selcukorkmaz.github.io/splitGraph/`, which 404s until that
-      workflow has run once and GitHub Pages is enabled. `urlchecker` and
-      `R CMD check --as-cran` both report it until then, and it is the only
-      failing URL in the package. If you would rather submit before deploying,
-      remove that URL from DESCRIPTION and add it back afterwards.
+- [ ] Push the branch and let the `pkgdown` workflow finish. This no longer
+      blocks submission -- the site URL is out of DESCRIPTION as of 0.4.0 -- but
+      the site should exist before the release is announced. After Pages is
+      live, put the URL back in DESCRIPTION, re-roxygenise, and confirm with
+      `urlchecker::url_check(".")` that it resolves.
 - [ ] `inst/CITATION` and the README citation block name the new version.
       (CITATION reads `meta[["Version"]]`, so it follows DESCRIPTION; the README
       block is hand-written and must be edited.)

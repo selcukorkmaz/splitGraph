@@ -40,7 +40,6 @@ equally. See the \code{split_spec} contract in \code{?as_split_spec} and the
 Useful links:
 \itemize{
   \item \url{https://github.com/selcukorkmaz/splitGraph}
-  \item \url{https://selcukorkmaz.github.io/splitGraph/}
   \item Report bugs at \url{https://github.com/selcukorkmaz/splitGraph/issues}
 }
 
