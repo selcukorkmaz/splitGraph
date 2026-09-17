@@ -1,5 +1,16 @@
 # splitGraph 0.4.0
 
+## Fixes made during CRAN submission
+
+- `export_graph(format = "gml")` now passes explicit node ids to igraph's GML
+  writer. Leaving igraph's `id` argument at its `NULL` default made newer
+  igraph versions hand a zero-length vector to the C layer, which rejected it
+  with "Size of id vector must match vertex count"; the failure appeared on
+  CRAN's R-devel machines while passing locally on igraph 2.2.1.
+- The README's links to `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are now
+  absolute GitHub URLs. Both files are build-ignored, so the relative links
+  dangled inside the installed package.
+
 A deliberate **breaking release** (see "Breaking changes" below); everything
 after it is intended to be additive. The theme is maturity: every step of the
 pipeline is now linear in the size of the dataset, the `split_spec` contract is

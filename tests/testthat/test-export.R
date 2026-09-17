@@ -36,6 +36,11 @@ test_that("export_graph writes GML and CSV tables", {
 
   export_graph(g, gml, format = "gml")
   expect_equal(igraph::vcount(igraph::read_graph(gml, format = "gml")), nrow(g$nodes$data))
+  # The writer is given explicit node ids, because leaving igraph's `id` at its
+  # NULL default fails in some igraph versions. Assert they are actually there,
+  # one per node, so a regression cannot pass silently.
+  gml_lines <- readLines(gml)
+  expect_identical(sum(grepl("^[[:space:]]*id [0-9]+$", gml_lines)), nrow(g$nodes$data))
 
   export_graph(g, nodes_csv, format = "nodes_csv")
   nodes <- utils::read.csv(nodes_csv, stringsAsFactors = FALSE)

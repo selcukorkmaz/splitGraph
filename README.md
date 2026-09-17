@@ -396,9 +396,10 @@ produces:
 ## Contributing
 
 Contributions, bug reports, and questions are welcome. Please see
-[`CONTRIBUTING.md`](.github/CONTRIBUTING.md) for how to report issues, seek
-support, and submit pull requests, and the
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Report problems on the
+[`CONTRIBUTING.md`](https://github.com/selcukorkmaz/splitGraph/blob/main/.github/CONTRIBUTING.md)
+for how to report issues, seek support, and submit pull requests, and the
+[`CODE_OF_CONDUCT.md`](https://github.com/selcukorkmaz/splitGraph/blob/main/CODE_OF_CONDUCT.md).
+Report problems on the
 [issue tracker](https://github.com/selcukorkmaz/splitGraph/issues).
 
 ## License

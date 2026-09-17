@@ -85,7 +85,16 @@ export_graph <- function(graph, file, format = c("graphml", "gml", "nodes_csv", 
     vertices <- tables$nodes
     names(vertices)[names(vertices) == "node_id"] <- "name"
     g <- igraph::graph_from_data_frame(tables$edges, vertices = vertices, directed = TRUE)
-    igraph::write_graph(g, file, format = format)
+    if (identical(format, "gml")) {
+      # Supply the GML node ids explicitly. Leaving `id` at its NULL default
+      # makes igraph's own writer hand a zero-length vector to the C layer in
+      # some versions, which then rejects it ("Size of id vector must match
+      # vertex count"). An explicit 1..n is what the writer would have produced
+      # anyway and is accepted by every version.
+      igraph::write_graph(g, file, format = format, id = seq_len(igraph::vcount(g)))
+    } else {
+      igraph::write_graph(g, file, format = format)
+    }
   }
 
   invisible(normalizePath(file, winslash = "/", mustWork = FALSE))
