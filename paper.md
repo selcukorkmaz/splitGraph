@@ -48,30 +48,25 @@ split*; executing that decision is left to resampling engines.
 
 # Statement of need
 
-Researchers who fit models to biomedical, ecological, or otherwise structured
+Researchers fitting models to biomedical, ecological, or otherwise structured
 data are routinely told to "group by subject" or "block by batch"
 [@roberts2017crossvalidation; @whalen2022pitfalls]. The advice is sound, but the
 knowledge it depends on — which of thirty metadata columns encode dependence,
 whether a subject appears in two studies, whether a feature set was fitted on
-the whole cohort — usually lives in a spreadsheet, a lab notebook, and a
-collaborator's memory. It is transcribed into a grouping vector by hand, once,
-and is then unavailable for checking, for reuse, or for review.
+the whole cohort — usually lives in a spreadsheet and a collaborator's memory.
+It is transcribed into a grouping vector by hand, once.
 
 Three consequences follow. The grouping cannot be *validated*: nothing detects
 that a sample was assigned to two subjects, or that a declared time ordering
 contradicts the recorded timepoint sequence. It cannot be *transported*: a
 collaborator working in Python re-derives it from the same messy metadata and
 may not reproduce it. And it cannot be *audited*: a reviewer sees the folds, not
-the reasoning, so the claim "no subject straddles a fold" has to be taken on
-trust.
+the reasoning, so "no subject straddles a fold" must be taken on trust.
 
-`splitGraph` addresses this representation-and-interchange layer. Its intended
-users are analysts and method developers who need a leakage-aware split to be
-inspectable and reproducible rather than merely computed, and downstream package
-authors who want to consume a dependency-aware partition without reimplementing
-its derivation. The deliberate boundary — deriving constraints but never
-generating folds, fitting models, or producing statistical leakage evidence —
-keeps the artifact neutral enough for any consumer to adopt.
+`splitGraph` addresses this representation-and-interchange layer. It is aimed at
+analysts who need a leakage-aware split to be inspectable rather than merely
+computed, and at package authors who want to consume a dependency-aware
+partition without reimplementing its derivation.
 
 # State of the field
 
@@ -107,15 +102,21 @@ ships adapters demonstrating exactly that.
 
 # Software design
 
-Three design decisions carry most of the weight.
+\autoref{fig:pipeline} shows the resulting data flow. Three design decisions
+carry most of the weight.
+
+![Data flow through splitGraph. A metadata table becomes a typed dependency
+graph, which is validated and then reduced to a split constraint, a split
+specification and a schema-versioned JSON artifact. Everything to the right of
+the dashed line — generating folds, fitting models — belongs to a
+consumer.\label{fig:pipeline}](paper-figures/paper-pipeline.png)
 
 **Typing the graph rather than generalising it.** Nodes and edges are drawn from
 a closed schema of 11 node types and 17 relations, not from arbitrary strings.
 This buys validation: because the schema knows that a sample has at most one
-subject and that `timepoint_precedes` is acyclic, structural, semantic and
-leakage-relevant checks can run automatically over any graph, in three layers,
-before a split is derived. An open schema would have been more flexible
-and would have made those guarantees impossible.
+subject and that `timepoint_precedes` is acyclic, checks can run automatically
+over any graph before a split is derived. An open schema would have been more
+flexible and would have made those guarantees impossible.
 
 **Separating the decision from its execution.** The `split_spec` is the
 deliverable, and it is deliberately inert: a sample table plus scalar
@@ -132,13 +133,61 @@ than by enumerating sample pairs, which keeps the pipeline linear in samples and
 edges. On a synthetic cohort of 20,000 samples with repeated subjects, 400
 batches, five studies, eight sites and four timepoints, building the graph,
 validating it, deriving a composite constraint and writing the specification
-take about six seconds in total on a laptop. Thresholded *pairwise* relations —
-genetic relatedness and spatial proximity — are handled in the same framework by
-transitive closure over a similarity graph, which expresses a grouping that no
-single categorical column can.
+take about six seconds in total on a laptop. The package depends only on
+`igraph` [@csardi2006igraph] and base R, so it installs anywhere its consumers
+do.
 
-The package depends only on `igraph` [@csardi2006igraph] and base R, so it
-installs anywhere its consumers do.
+# Core functionality
+
+**Validation** runs in three layers. *Structural* checks reject a malformed
+graph (dangling edges, duplicate identifiers, an unsupported relation);
+*semantic* checks reject a contradictory one (a sample assigned to two subjects,
+a time index that disagrees with the recorded precedence); *leakage* checks are
+advisory and describe rather than prescribe — repeated subjects, a subject
+spanning several studies or sites, a feature set fitted on the whole cohort.
+
+**Derivation** offers eleven constraint modes. Eight are *direct*: each sample
+carries one grouping node (subject, batch, study, time, site, region, platform,
+assay). Two are *pairwise and thresholded* — genetic relatedness and spatial
+proximity — where groups form by transitive closure over a similarity graph, a
+partition no single categorical column can express. The eleventh, *composite*,
+combines any of the others, either strictly (one group per connected component)
+or by priority order.
+
+**Handoff** attaches everything the constraint did not use as the primary
+grouping: coarser axes as blocking annotations, an ordering rank when the graph
+carries time, and the outcome level each sample holds as a stratum annotation.
+`splitGraph` records that annotation but never balances folds itself.
+
+# Example workflow
+
+Given a data frame `meta` with one row per sample, the whole pipeline is five
+calls:
+
+```r
+library(splitGraph)
+
+g <- graph_from_metadata(meta)
+validate_graph(g)
+
+constraint <- derive_split_constraints(g, mode = "subject")
+spec       <- as_split_spec(constraint, graph = g)
+write_split_spec(spec, "split_spec.json")
+```
+
+`spec` carries the grouping and the declared roles; `grouping_vector(constraint)`
+returns the group per sample for any R resampler. The JSON file is what crosses
+the language boundary, where `X` is the design matrix:
+
+```python
+from splitspec import load_split_spec
+from sklearn.model_selection import StratifiedGroupKFold
+
+spec = load_split_spec("split_spec.json")
+StratifiedGroupKFold(n_splits=5).split(X, y=spec.strata(), groups=spec.groups())
+```
+
+Nothing about the partition is recomputed in Python; it is read.
 
 # Research impact statement
 
@@ -148,23 +197,20 @@ every change across five continuous-integration configurations spanning macOS,
 Windows and Linux, and separately measured at 91.4% statement coverage.
 
 Its near-term significance rests on being consumed rather than merely published,
-and two integrations already exist and are pinned by tests. `bioLeak` — an R
-package for leakage-audited evaluation, described in a manuscript under separate
-review — reads a `split_spec` directly and turns it into an executable split
-plan; a contract test in `splitGraph` asserts, against the installed `bioLeak`,
-exactly which fields and modes that seam supports, so the boundary is documented
-rather than assumed. A pure-Python reference consumer ships with the package: it
-wires the specification into scikit-learn's `GroupKFold` and
-`StratifiedGroupKFold` directly, and supplies the ordering that
-`TimeSeriesSplit` consumes. A conformance test asserts that it recovers
-precisely the grouping, ordering and stratum annotation that R emitted, so the
-two implementations cannot drift apart between releases.
+and two integrations exist and are pinned by tests. `bioLeak` — an R package for
+leakage-audited evaluation, described in a manuscript under separate review —
+reads a `split_spec` and turns it into an executable split plan; a contract test
+asserts, against the installed `bioLeak`, exactly which fields and modes that
+seam supports. The shipped Python consumer is covered by a conformance test
+asserting that it recovers precisely the grouping, ordering and stratum
+annotation R emitted, so the two implementations cannot drift apart between
+releases.
 
-The design has been exercised on real data as well as synthetic: a worked case
-study takes the 134-sample, 20-donor, seven-cell-population cohort of GEO series
-GSE60424 [@linsley2014gse60424] from raw metadata through validation to a
-handed-off specification, and shows that a naive five-fold assignment would
-place all twenty donors on both sides of a split.
+The design has been exercised on real data: a worked case study takes the
+134-sample, 20-donor, seven-cell-population cohort of GEO series GSE60424
+[@linsley2014gse60424] from raw metadata to a handed-off specification, and
+shows that a naive five-fold assignment would place all twenty donors on both
+sides of a split.
 
 # AI usage disclosure
 
