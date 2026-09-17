@@ -1,24 +1,51 @@
 ^docs$
-^\\.Rproj\\.user$
 
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.Renviron$
+^\.Rhistory$
+\.Rhistory$
 ^\.claude$
+^\.vscode$
+^\.idea$
+
+# Check / build artifacts produced in the source tree.
 ^splitGraph\.Rcheck$
+^.*\.Rcheck$
 ^splitGraph_.*\.tar\.gz$
+^revdep$
+^MD5$
+
+# Repository-only material: roadmaps, the JOSS paper, CI, coverage and
+# pkgdown configuration, and the developer scripts behind dev/release.md.
 ^ROADMAP.*\.md$
 ^\.github$
 ^paper\.md$
 ^paper\.bib$
 ^codecov\.yml$
 ^CODE_OF_CONDUCT\.md$
-^MD5$
+^cran-comments\.md$
 ^_pkgdown\.yml$
+^_pkgdown\.yml\.bak$
 ^\.lintr$
 ^dev$
 ^pkgdown$
-^inst/python/__pycache__$
+^pkgdown-site$
+
+# Python bytecode. The cache directory sits at
+# inst/python/splitspec/__pycache__, so match it at any depth rather than at a
+# fixed path: an anchored pattern silently let the .pyc files into the tarball.
+__pycache__
+\.pyc$
+
+# knitr leftovers from rendering a vignette in place. The vignettes shipped to
+# users are built into inst/doc by `R CMD build`, never from here.
+^vignettes/figure$
+^vignettes/.*_cache$
+^vignettes/.*_files$
+^vignettes/.*\.html$
 ^tests/testthat/Rplots\.pdf$
+^Rplots\.pdf$
+
 ^\.DS_Store$
 ^.*/\.DS_Store$
-^pkgdown-site$
