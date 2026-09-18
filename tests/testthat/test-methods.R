@@ -58,3 +58,15 @@ test_that("plot.dependency_graph renders with the typed layout", {
   expect_silent(plot(graph, layout = "sugiyama"))
   expect_silent(plot(graph, show_labels = FALSE))
 })
+
+test_that("plot focus modes render", {
+  meta <- data.frame(sample_id = c("S1", "S2", "S3"), subject_id = c("P1", "P1", "P2"), batch_id = c("B1", "B2", "B1"),
+                     stringsAsFactors = FALSE)
+  g <- graph_from_metadata(meta)
+  pdf(NULL)
+  on.exit(dev.off(), add = TRUE)
+  expect_silent(plot(g, focus = "sample_projection", via = "Subject"))
+  expect_silent(plot(g, focus = "ego", node = "subject:P1"))
+  expect_error(plot(g, focus = "ego"), "node")
+  expect_error(plot(g, focus = "ego", node = "sample:nope"), class = "splitgraph_reference_error")
+})

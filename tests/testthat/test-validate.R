@@ -184,9 +184,8 @@ test_that("error_on_fail still errors when severity filtering hides visible erro
     fixed = TRUE
   )
   expect_error(
-    suppressWarnings(validate_depgraph(graph, severities = "warning", error_on_fail = TRUE)),
-    "Graph validation failed.",
-    fixed = TRUE
+    validate_graph(graph, severities = "warning", error_on_fail = TRUE),
+    class = "splitgraph_validation_error"
   )
 })
 
@@ -237,7 +236,7 @@ test_that("semantic validation does not require study assignments when no study 
   expect_false(any(validation$issues$code == "sample_missing_study_assignment"))
 })
 
-test_that("validate_depgraph is a compatibility alias", {
+test_that("validate_graph with all levels named explicitly matches the default", {
   nodes <- graph_node_set(
     data.frame(
       node_id = c("sample:S1", "sample:S2", "subject:P1", "featureset:FS1"),
@@ -276,10 +275,7 @@ test_that("validate_depgraph is a compatibility alias", {
   )
 
   graph <- dependency_graph(nodes = nodes, edges = edges, graph = NULL)
-  # validate_depgraph is deprecated as of 0.2.0; deprecation warnings are
-  # tested in test-deprecations.R, so silence them here while we verify
-  # delegation parity with validate_graph().
-  validation <- suppressWarnings(validate_depgraph(graph))
+  validation <- validate_graph(graph, levels = c("structural", "semantic", "leakage"))
   graph_validation <- validate_graph(graph)
 
   expect_s3_class(validation, "depgraph_validation_report")

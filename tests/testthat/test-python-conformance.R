@@ -6,7 +6,28 @@
 skip_if_no_python_conformance <- function() {
   testthat::skip_if_not_installed("jsonlite")
   testthat::skip_on_cran()
-  py <- Sys.which("python3")
+  # Try `python3` first, then `python` (the usual name on Windows). A name on
+  # PATH is not proof of an interpreter: the Windows Store ships `python3.exe`
+  # / `python.exe` launcher stubs that print "Python not found" and exit
+  # non-zero. So probe each candidate by actually running it and keep the
+  # first one that reports a Python 3 major version.
+  py <- ""
+  for (name in c("python3", "python")) {
+    candidate <- Sys.which(name)
+    if (!nzchar(candidate)) next
+    probe <- tryCatch(
+      suppressWarnings(system2(
+        candidate, c("-c", shQuote("import sys; print(sys.version_info[0])")),
+        stdout = TRUE, stderr = TRUE
+      )),
+      error = function(e) character()
+    )
+    ok <- is.null(attr(probe, "status")) && any(trimws(probe) == "3")
+    if (ok) {
+      py <- candidate
+      break
+    }
+  }
   if (!nzchar(py)) testthat::skip("python3 not available")
   script <- system.file("python", "conformance.py", package = "splitGraph")
   if (!nzchar(script) || !file.exists(script)) testthat::skip("conformance.py not found")
@@ -21,6 +42,7 @@ test_that("Python reference consumer reproduces R grouping and order_rank", {
     subject_id   = c("P1", "P1", "P2", "P3"),
     timepoint_id = c("T0", "T1", "T0", "T2"),
     time_index   = c(0, 1, 0, 2),
+    outcome_id   = c("case", "case", "ctrl", "ctrl"),
     stringsAsFactors = FALSE
   )
   g <- graph_from_metadata(meta)
@@ -58,4 +80,10 @@ test_that("Python reference consumer reproduces R grouping and order_rank", {
   py_order <- unlist(py$order_ranks)
   expect_equal(py_order[names(r_order)], r_order[names(r_order)],
                ignore_attr = TRUE)
+
+  # Stratum annotation (schema 0.3.0) is recovered through stratum_var.
+  expect_identical(py$stratum_var, "stratum")
+  r_strata <- stats::setNames(spec$sample_data$stratum, spec$sample_data$sample_id)
+  py_strata <- unlist(py$strata)
+  expect_identical(py_strata[names(r_strata)], r_strata[names(r_strata)])
 })

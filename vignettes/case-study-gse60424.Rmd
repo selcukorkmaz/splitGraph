@@ -1,0 +1,264 @@
+---
+title: "Case study: a real multi-donor, multi-cell-type cohort (GEO GSE60424)"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{Case study: a real multi-donor, multi-cell-type cohort (GEO GSE60424)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(splitGraph)
+```
+
+The other vignettes use small synthetic tables. This one walks through a real
+public cohort whose metadata has exactly the kind of structure that makes naive
+random splits leak, and shows what splitGraph's validation, derivation, and
+`split_spec` look like on it.
+
+## The data
+
+GEO series [GSE60424](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE60424)
+is an RNA-seq study of whole blood and six sorted immune cell populations from
+20 donors: healthy controls and patients with type 1 diabetes, amyotrophic
+lateral sclerosis, sepsis, or multiple sclerosis. The sample-level metadata
+(not the expression data) ships with splitGraph as
+`inst/extdata/GSE60424_samples.csv`; `inst/extdata/GSE60424_README.md` records
+how it was derived from the GEO `characteristics` fields.
+
+```{r load}
+path <- system.file("extdata", "GSE60424_samples.csv", package = "splitGraph")
+gse <- read.csv(path, stringsAsFactors = FALSE)
+str(gse)
+```
+
+Three facts about its structure drive everything below:
+
+```{r facts}
+# 1. Every donor contributed six or seven samples, one per cell population
+#    that was successfully sorted for them.
+range(table(gse$subject_id))
+table(table(gse$subject_id))
+# 2. Every donor was collected on its own date, so collection date (the natural
+#    "batch") coincides with donor.
+all(tapply(gse$batch_id, gse$subject_id, function(x) length(unique(x))) == 1)
+# 3. Every donor has exactly one disease status.
+all(tapply(gse$condition, gse$subject_id, function(x) length(unique(x))) == 1)
+```
+
+One caveat about the labels: GEO records multiple sclerosis samples as
+"pretreatment" or "posttreatment", but these come from *different* donors
+(three each), not from the same individuals over time. There is therefore no
+repeated-measure time axis in this cohort, and we deliberately do **not** model
+the labels as timepoints; they stay inside `disease_status`.
+
+```{r no-longitudinal}
+with(gse[gse$condition == "MS", ], table(subject_id, timepoint_id))
+```
+
+## Build the graph
+
+Sorted cell populations are a categorical compartment of the sample, which is
+what splitGraph's `Region` node type represents; disease status is the outcome.
+`columns =` maps the CSV names onto the canonical ones.
+
+```{r build}
+meta <- gse[, c("sample_id", "subject_id", "batch_id", "cell_type", "condition", "sex")]
+g <- graph_from_metadata(
+  meta,
+  columns = c(region_id = "cell_type", outcome_id = "condition"),
+  graph_name = "GSE60424"
+)
+g
+summary(g)$node_types
+```
+
+At 186 nodes this is past the size where drawing the whole graph tells you
+anything. `focus = "ego"` is the view for a graph like this: it zooms to one
+node's neighbourhood, so you can check a single donor's structure instead of
+squinting at the cohort. Two hops out from donor `D20` reach its samples, and
+through them the cell populations, collection date and disease status those
+samples carry:
+
+```{r ego, fig.width = 7.2, fig.height = 5, dpi = 150, out.width = "100%"}
+plot(g, focus = "ego", node = "subject:D20", order = 2,
+     legend_position = "bottomleft")
+```
+
+## What validation says
+
+```{r validate}
+report <- validate_graph(g)
+report
+summary(report)$by_code
+```
+
+Twenty `repeated_subject_samples` advisories, one per donor: every donor is
+linked to several samples, so any split that treats samples as independent will
+put the same person on both sides. Nothing rises above advisory, and the report
+is short for two different reasons worth separating.
+
+The cross-study and cross-site rules cannot fire because this graph has no
+`Study` or `Site` nodes at all — the CSV carries neither, so those axes simply do
+not exist here. `heavy_batch_reuse` does not fire because no batch holds half
+the cohort: each collection date covers one donor's six or seven samples.
+
+There is also no rule for a donor spanning several *regions*, and in this cohort
+every donor spans six or seven of them. That is deliberate rather than an
+oversight: one person contributing several sorted cell populations is the design
+of the experiment, not an anomaly. The advisory that a donor has several samples
+already carries the leakage signal; which compartments those samples came from
+is information for the split, not a finding against the data.
+
+## How much would a naive split leak?
+
+A plain random five-fold assignment of the 134 samples, without splitGraph:
+
+```{r naive}
+set.seed(1)
+fold <- sample(rep(1:5, length.out = nrow(gse)))
+straddling <- tapply(fold, gse$subject_id, function(f) length(unique(f)) > 1)
+sum(straddling)
+```
+
+`r sum(straddling)` of 20 donors would appear in more than one fold. A model
+evaluated that way sees each test donor's other cell populations during
+training.
+
+## Derive constraints
+
+```{r derive}
+by_subject <- derive_split_constraints(g, mode = "subject")
+by_batch   <- derive_split_constraints(g, mode = "batch")
+by_region  <- derive_split_constraints(g, mode = "region")
+c(subject = by_subject$metadata$n_groups,
+  batch   = by_batch$metadata$n_groups,
+  region  = by_region$metadata$n_groups)
+```
+
+Because collection date and donor coincide, the batch partition *is* the
+subject partition. Two groupings with different labels but the same partition
+compare equal under a canonical relabelling:
+
+```{r same-partition}
+canon <- function(x) as.integer(match(x, unique(x)))
+identical(canon(grouping_vector(by_subject)), canon(grouping_vector(by_batch)))
+```
+
+The region partition is a different animal, and it is worth seeing why it is the
+wrong split unit here even though it is a perfectly valid one. Grouping by cell
+population cuts the cohort *across* donors rather than between them, so every
+donor lands in six or seven different groups — the exact leak the study is
+exposed to:
+
+```{r region-wrong}
+region_groups <- grouping_vector(by_region)
+donor_spread <- tapply(region_groups[gse$sample_id], gse$subject_id,
+                       function(x) length(unique(x)))
+range(donor_spread)
+sum(donor_spread > 1)   # donors split across more than one region group
+```
+
+Which is why region travels on the spec as a blocking annotation below, not as
+`group_var`. The same column can be the right answer or the wrong one depending
+on what has to generalise; the graph makes the difference inspectable rather
+than a matter of taste.
+
+### Composite grouping and over-merging
+
+Six of the seven cell populations were sorted for all twenty donors. That is
+enough for a strict composite over subject **and** region to chain the entire
+cohort into one component — donor A's B-cells link to every other donor's
+B-cells, which link to their own other populations, and so on until nothing is
+left to split.
+
+```{r composite}
+strict <- derive_split_constraints(g, mode = "composite", via = c("subject", "region"))
+strict$metadata$n_groups
+strict$metadata$warnings
+```
+
+The empty warning vector is the part to notice. One group covering all 134
+samples is a correct answer to the question that was asked, and `splitGraph`
+does not flag it, so on a composite derivation read `metadata$n_groups` yourself
+before going further. `detect_dependency_components()` shows it coming before
+you derive anything:
+
+```{r components}
+comps <- detect_dependency_components(g, via = c("Subject", "Region"))
+table(as.data.frame(comps)$component_size)
+```
+
+A single component of 134 — the cohort has no internal boundary along those two
+relations together.
+
+The rule-based strategy does not chain relations. With subject first in the
+priority order, every sample has a subject, so region is never consulted and
+the grouping is the subject partition, with region kept as an annotation:
+
+```{r rule-based}
+ruled <- derive_split_constraints(
+  g, mode = "composite", strategy = "rule_based",
+  via = c("subject", "region"), priority = c("subject", "region")
+)
+ruled$metadata$n_groups
+head(as.data.frame(ruled)[, c("sample_id", "group_id", "constraint_type")], 3)
+```
+
+## The split_spec
+
+Grouping by subject is the right primary constraint here; batch and region
+travel as blocking annotations and the disease status as the stratum.
+
+```{r spec}
+spec <- as_split_spec(by_subject, graph = g)
+spec
+spec$block_vars
+spec$stratum_var
+head(as.data.frame(spec)[, c("sample_id", "group_id", "batch_group", "region_group", "stratum")], 7)
+validate_split_spec(spec)
+```
+
+The leakage summary marks which of the validation findings this constraint
+structurally severs:
+
+```{r risks}
+risks <- summarize_leakage_risks(g, constraint = by_subject, split_spec = spec)
+unique(as.data.frame(risks)[, c("category", "severity", "severed")])
+```
+
+A consumer that groups on `group_id` and stratifies on `stratum` (for example
+scikit-learn's `StratifiedGroupKFold` through the shipped Python reader, or
+bioLeak's `as_leaksplits()`) will now keep every donor's cell populations on
+one side of each fold while keeping the five conditions represented in every
+fold as far as 20 donors allow.
+
+## Working with a subset
+
+Restricting the analysis to, say, healthy controls and multiple sclerosis
+patients is a graph operation, not a re-import:
+
+```{r subset}
+keep <- gse$sample_id[gse$condition %in% c("Healthy Control", "MS")]
+g_sub <- subset_graph(g, samples = keep, graph_name = "GSE60424: HC vs MS")
+summary(g_sub)$node_types
+spec_sub <- as_split_spec(derive_split_constraints(g_sub, "subject"), graph = g_sub)
+table(spec_sub$sample_data$stratum)
+```
+
+## Handing off
+
+```{r write, eval = requireNamespace("jsonlite", quietly = TRUE)}
+out <- tempfile(fileext = ".json")
+write_split_spec(spec, out)
+validate_split_spec_json(out)$valid
+unlink(out)
+```
+
+The JSON carries the grouping, the blocking columns, the stratum, and the
+provenance (`metadata$relations_used`, `splitgraph_version`, `derived_at`), so
+the decision "one donor never straddles a fold" is recorded once and can be
+executed anywhere.

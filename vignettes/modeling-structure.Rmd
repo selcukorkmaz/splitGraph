@@ -33,57 +33,109 @@ models several further leakage axes, in two families:
   edges and grouped by transitive closure, a partition a single categorical
   column cannot express.
 
-This vignette builds and groups by each, and shows how the threshold drives the
-pairwise grouping.
+This vignette builds and groups by each, shows how the threshold drives the
+pairwise grouping, and points out the two ways a structure-aware grouping goes
+wrong — collapsing into one group, or dissolving into singletons.
 
 # Cluster-style relations: site, region, platform, assay
 
 `graph_from_metadata()` auto-detects `site_id`, `region_id`, `platform_id`, and
 `assay_id` columns and builds the corresponding typed nodes and edges. Each then
-has its own constraint mode. The example below uses site, platform, and assay;
-`region` behaves identically (a `region_id` column and `mode = "region"`) and is
-omitted only to keep the output short.
+has its own constraint mode, and all four behave identically — only the column
+and the mode name change.
 
 ```{r cluster}
 meta <- data.frame(
   sample_id   = paste0("S", 1:6),
   subject_id  = c("P1", "P1", "P2", "P2", "P3", "P3"),
   site_id     = c("NYC", "NYC", "BOS", "BOS", "NYC", "BOS"),
-  platform_id = c("illumina", "illumina", "nanopore", "nanopore", "illumina", "nanopore"),
+  region_id   = c("cortex", "cortex", "cortex",
+                  "hippocampus", "hippocampus", "hippocampus"),
+  platform_id = c("illumina", "illumina", "nanopore",
+                  "nanopore", "illumina", "nanopore"),
   assay_id    = c("rnaseq", "rnaseq", "rnaseq", "wgs", "wgs", "wgs"),
   stringsAsFactors = FALSE
 )
 
 g <- graph_from_metadata(meta, graph_name = "structure-demo")
 
-grouping_vector(derive_split_constraints(g, mode = "site"))
-grouping_vector(derive_split_constraints(g, mode = "platform"))
-grouping_vector(derive_split_constraints(g, mode = "assay"))
+cluster_modes <- c("site", "region", "platform", "assay")
+do.call(cbind, lapply(
+  stats::setNames(cluster_modes, cluster_modes),
+  function(m) grouping_vector(derive_split_constraints(g, mode = m))
+))
+```
+
+Each column is a different, equally defensible partition of the same six
+samples. Choosing between them is a scientific question, not a technical one:
+which of these axes must a model generalise across?
+
+Site structure also has a validation rule of its own. A subject whose samples
+were collected at more than one site is flagged, because grouping by site alone
+would then place one individual on both sides of a split:
+
+```{r cross-site}
+report <- validate_graph(g)
+report$issues[report$issues$code == "subject_cross_site_overlap",
+              c("severity", "message")]
+
+# Which constraint modes actually sever that path:
+risks <- summarize_leakage_risks(g, constraint = derive_split_constraints(g, "subject"))
+as.data.frame(risks)[as.data.frame(risks)$category == "subject_cross_site_overlap",
+                     c("category", "severed")]
 ```
 
 Whatever mode is primary, every detected cluster relation is also carried into
 the `split_spec` as a *blocking annotation*, so a downstream consumer can block
-on site, platform, or assay even when the split unit is something else — here,
-subject:
+on site, region, platform, or assay even when the split unit is something else
+— here, subject:
 
 ```{r block-annotations}
 spec <- as_split_spec(derive_split_constraints(g, mode = "subject"), graph = g)
 spec$block_vars
-head(spec$sample_data[, c("sample_id", "group_id",
-                          "site_group", "platform_group", "assay_group")])
+head(spec$sample_data[, c("sample_id", "group_id", "site_group",
+                          "region_group", "platform_group", "assay_group")])
 ```
 
 Any of these relations can also participate in a **composite** derivation, where
 several dependency sources are combined and each connected component becomes one
-group:
+group. Site and platform partition this cohort the same way, so grouping on both
+at once still leaves two groups:
 
 ```{r composite}
 constraint <- derive_split_constraints(
   g, mode = "composite", strategy = "strict",
-  via = c("Subject", "Site", "Platform")
+  via = c("Site", "Platform")
 )
 grouping_vector(constraint)
 ```
+
+### Watch for a composite that collapses
+
+A strict composite can only ever *merge* groups, never split them, so every
+relation you add risks merging everything. Add subject to the same call and the
+entire cohort becomes one group:
+
+```{r composite-collapse}
+collapsed <- derive_split_constraints(
+  g, mode = "composite", strategy = "strict",
+  via = c("Site", "Platform", "Subject")
+)
+collapsed$metadata$n_groups
+grouping_vector(collapsed)
+```
+
+The validation report predicted this. `subject_cross_site_overlap` fired above
+because subject `P3` has one sample at each site; in a composite closure that
+subject is a bridge, so the `NYC` and `BOS` groups fuse and there is nothing
+left to hold out. One group is not an error — it is an arithmetically correct
+answer to the question that was asked — and `splitGraph` does not warn about it,
+so read `metadata$n_groups` before you rely on a composite.
+
+Two ways out, both already on this page: leave the bridging relation out of
+`via` (the `Site` + `Platform` call above), or keep the coarse axis as a
+*blocking annotation* rather than the split unit, which is what `site_group` in
+the spec is for. `vignette("faq-design-notes")` works through the trade-off.
 
 # Pairwise relation: genetic relatedness
 
@@ -121,6 +173,56 @@ g_rel <- build_dependency_graph(list(samples, subjects), list(belongs, rel_edges
 
 rel_groups <- grouping_vector(derive_split_constraints(g_rel, mode = "relatedness"))
 rel_groups
+```
+
+Real kinship tools rarely use those exact column names, and they do not all
+emit the long format. Both shapes are accepted. KING and GCTA write a long
+table with their own headers, which `id1` / `id2` / `kinship` rename:
+
+```{r kinship-columns}
+king <- data.frame(
+  ID1     = c("P1", "P2", "P1", "P5"),
+  ID2     = c("P2", "P3", "P4", "P6"),
+  Kinship = c(0.25, 0.20, 0.02, 0.30),
+  stringsAsFactors = FALSE
+)
+king_edges <- relatedness_edges_from_kinship(
+  king, threshold = 0.1, id1 = "ID1", id2 = "ID2", kinship = "Kinship"
+)
+as.data.frame(king_edges)[, c("from", "to")]
+```
+
+PLINK's `--make-rel square` instead writes a square GRM. Pass the matrix
+directly, with the subject ids as its dimnames; it is expanded to its
+upper-triangle pairs before thresholding, so the diagonal never becomes a
+self-edge:
+
+```{r kinship-matrix}
+grm <- matrix(
+  c(0.50, 0.25, 0.02, 0.00,
+    0.25, 0.50, 0.20, 0.00,
+    0.02, 0.20, 0.50, 0.00,
+    0.00, 0.00, 0.00, 0.50),
+  nrow = 4, byrow = TRUE,
+  dimnames = list(paste0("P", 1:4), paste0("P", 1:4))
+)
+
+as.data.frame(relatedness_edges_from_kinship(grm, threshold = 0.1))[
+  , c("from", "to")
+]
+```
+
+Whichever shape you start from, the value that passed the threshold is kept on
+the edge, so you can always see *why* a pair was linked rather than trusting the
+grouping blind:
+
+```{r kinship-attrs}
+kept <- as.data.frame(query_edge_type(g_rel, "subject_related_to"))
+data.frame(
+  from    = kept$from,
+  to      = kept$to,
+  kinship = vapply(kept$attrs, function(a) a$kinship, numeric(1))
+)
 ```
 
 The grouping is a transitive closure over the `subject_related_to` edges. The
@@ -161,13 +263,38 @@ g_rel_strict <- build_dependency_graph(list(samples, subjects), list(belongs, re
 grouping_vector(derive_split_constraints(g_rel_strict, mode = "relatedness"))
 ```
 
+Push the threshold further and the relation stops doing much work: samples end
+up alone in their own groups, which protects nothing. That case *is* detected —
+once more than half the samples sit in a group of one, the pairwise deriver
+records it in `metadata$warnings`, so a cut that quietly switched the relation
+off does not pass unnoticed:
+
+```{r rel-sparse}
+sparse <- derive_split_constraints(
+  build_dependency_graph(
+    list(samples, subjects),
+    list(belongs, relatedness_edges_from_kinship(kin, threshold = 0.28))
+  ),
+  mode = "relatedness"
+)
+sparse$metadata$n_groups
+sparse$metadata$warnings
+```
+
+That is the sparse end of the same trade-off the collapsing composite showed at
+the dense end: too permissive a cut merges the cohort into one unusable group,
+too strict a cut dissolves it into singletons that protect nothing. The
+threshold is where you choose between them.
+
 # Pairwise relation: spatial proximity
 
 Spatial proximity works the same way over sample coordinates — for example spot
 locations from spatial transcriptomics, positions on a tissue slide, or
 geographic site coordinates. `spatial_edges_from_coords()` connects samples
 within a radius (Euclidean distance over the coordinate columns), and
-`mode = "spatial"` groups the resulting connected components.
+`mode = "spatial"` groups the resulting connected components. The distance is
+computed over as many coordinate columns as you give it, so a `z` column for a
+tissue volume works exactly like a plain `x`/`y` slide.
 
 ```{r spatial}
 # Two spatial clusters. Cluster 1 (S1-S3) is a chain: neighbouring pairs are
@@ -220,6 +347,26 @@ legend("topleft", legend = levels(sp_grp), pch = 19,
        col = palette_sp[seq_along(levels(sp_grp))], title = "Spatial group", bty = "n")
 ```
 
+One thing to watch in a real coordinate table. When `coord_cols` is not given,
+every numeric column except the id is treated as a coordinate — so a QC metric
+or a slide number sitting in the same frame silently joins the distance
+calculation and can switch the relation off entirely:
+
+```{r coord-cols}
+coords_qc <- cbind(coords, reads_millions = c(31, 44, 12, 38, 27, 51))
+
+# `reads_millions` is picked up as a third dimension: nothing is within radius.
+nrow(as.data.frame(spatial_edges_from_coords(coords_qc, radius = 1.5)))
+
+# Naming the coordinate columns restores the five adjacency edges.
+nrow(as.data.frame(
+  spatial_edges_from_coords(coords_qc, radius = 1.5, coord_cols = c("x", "y"))
+))
+```
+
+Pass `coord_cols` whenever the frame carries anything numeric that is not a
+coordinate.
+
 # Deriving on a subset is leakage-safe
 
 Real splits are derived on a *subset* of samples — the training rows, say. For
@@ -237,6 +384,86 @@ groups:
 grouping_vector(
   derive_split_constraints(g_sp, mode = "spatial", samples = c("S1", "S3"))
 )
+```
+
+A subset is sometimes better expressed as a graph in its own right, for example
+when you want to validate it, plot it, or hand it around. `subset_graph()` does
+that, and it uses the same rule, so the grouping agrees with `samples =`:
+
+```{r subset-graph}
+g_two <- subset_graph(g_sp, samples = c("S1", "S3"), graph_name = "S1 + S3")
+grouping_vector(derive_split_constraints(g_two, mode = "spatial"))
+```
+
+# Combining a pairwise relation with a direct one
+
+Pairwise relations are not a separate world: either of them can be listed in a
+composite `via` alongside the direct relations, and all of them feed the same
+connected-component search. That matters when two different mechanisms each link
+a different pair of samples, and severing only one would leave the other open.
+
+Here relatedness links two subjects that share no batch, while batch links two
+samples from unrelated subjects. Neither relation alone separates the cohort
+correctly; the composite does.
+
+The graphs earlier on this page were assembled node set by node set to keep
+every piece visible, but a pairwise relation does not require that. Build the
+direct structure from the metadata frame as usual, then attach the thresholded
+edges to it with `add_edges()`:
+
+```{r composite-pairwise}
+meta_c <- data.frame(
+  sample_id  = paste0("S", 1:4),
+  subject_id = paste0("P", 1:4),
+  batch_id   = c("B1", "B1", "B2", "B3"),
+  stringsAsFactors = FALSE
+)
+kin_c <- data.frame(id1 = "P2", id2 = "P3", kinship = 0.25, stringsAsFactors = FALSE)
+
+g_mixed <- add_edges(
+  graph_from_metadata(meta_c, graph_name = "mixed-structure"),
+  relatedness_edges_from_kinship(kin_c, threshold = 0.1)
+)
+
+# batch alone: {S1,S2} {S3} {S4}   relatedness alone: {S2,S3}
+grouping_vector(derive_split_constraints(g_mixed, "batch"))
+grouping_vector(derive_split_constraints(g_mixed, "relatedness"))
+
+# combined, the chain S1-S2 (batch) - S3 (kinship) becomes one group:
+mixed <- derive_split_constraints(g_mixed, "composite", via = c("batch", "relatedness"))
+grouping_vector(mixed)
+mixed$metadata$via
+```
+
+Note what `via` accepts and where. `derive_split_constraints()` takes either a
+lower-case mode or a node type, and pairwise modes are valid there — that is
+what makes the call above possible. The graph-level views take node types only:
+`detect_dependency_components()` and `plot(focus = "sample_projection")` project
+samples through `Subject`, `Batch` and friends, and reject `"relatedness"`,
+because a pairwise relation is an edge set rather than a node type to route
+through. Use the derivation to combine them and `grouping_vector()` to read the
+result.
+
+Under `strategy = "rule_based"` a pairwise source behaves as a fallback instead:
+a sample takes the first relation in `priority` that gives it a non-singleton
+group, so relations never chain.
+
+Whichever route you take, the threshold that produced the edges is recorded on
+the graph, per relation, and is serialised with it — so a reader of the file can
+see which cut created the grouping:
+
+```{r threshold-provenance}
+g_mixed$metadata$edge_sources$subject_related_to[c("threshold", "metric")]
+```
+
+A spec derived from a *single* pairwise mode also carries that threshold as a
+scalar in its own metadata. A composite spec does not, because several
+relations (each with its own cut) may have contributed; the graph's
+`edge_sources` is the complete record in that case:
+
+```{r threshold-in-spec}
+as_split_spec(derive_split_constraints(g_mixed, "relatedness"),
+              graph = g_mixed)$metadata[c("threshold", "threshold_metric")]
 ```
 
 # Thresholds are inputs, not modeling

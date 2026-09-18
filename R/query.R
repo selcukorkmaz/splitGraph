@@ -8,13 +8,13 @@
     return(.depgraph_default_path_cap)
   }
   if (length(max_length) != 1L || !is.numeric(max_length)) {
-    stop("`max_length` must be a single numeric value, Inf, or NULL.", call. = FALSE)
+    .depgraph_stop("`max_length` must be a single numeric value, Inf, or NULL.")
   }
   if (is.infinite(max_length)) {
     return(-1)
   }
   if (is.na(max_length) || max_length < 0) {
-    stop("`max_length` must be non-negative.", call. = FALSE)
+    .depgraph_stop("`max_length` must be non-negative.")
   }
   as.integer(max_length)
 }
@@ -25,7 +25,8 @@
   .depgraph_assert(length(node_ids) > 0L, "`node_ids` must contain at least one value.")
   .depgraph_assert(
     all(node_ids %in% node_data$node_id),
-    paste0("Unknown node IDs: ", paste(setdiff(node_ids, node_data$node_id), collapse = ", "))
+    paste0("Unknown node IDs: ", paste(setdiff(node_ids, node_data$node_id), collapse = ", ")),
+    class = "splitgraph_reference_error", code = "unknown_node_ids"
   )
   node_ids
 }
@@ -41,7 +42,8 @@
   unknown <- setdiff(samples, valid_inputs)
   .depgraph_assert(
     length(unknown) == 0L,
-    paste0("Unknown sample IDs: ", paste(unknown, collapse = ", "))
+    paste0("Unknown sample IDs: ", paste(unknown, collapse = ", ")),
+    class = "splitgraph_reference_error", code = "unknown_sample_ids"
   )
 
   matched <- sample_nodes$node_id[sample_nodes$node_id %in% samples]
@@ -197,108 +199,145 @@
   ]
 }
 
+.depgraph_empty_shared_table <- function() {
+  data.frame(
+    sample_id_1 = character(),
+    sample_id_2 = character(),
+    sample_node_id_1 = character(),
+    sample_node_id_2 = character(),
+    shared_node_id = character(),
+    shared_node_type = character(),
+    edge_type = character(),
+    stringsAsFactors = FALSE
+  )
+}
+
+.depgraph_empty_projection <- function() {
+  data.frame(
+    sample_node_id_1 = character(),
+    sample_node_id_2 = character(),
+    projection_edge_id = character(),
+    stringsAsFactors = FALSE
+  )
+}
+
+# Sample -> dependency-target edges of the selected relation types, restricted to
+# the given sample node ids. Shared by the pair table and the component search.
+.depgraph_dependency_edges <- function(graph, sample_node_ids, edge_types) {
+  edge_data <- graph$edges$data
+  edges <- edge_data[
+    edge_data$edge_type %in% edge_types & edge_data$from %in% sample_node_ids,
+    c("from", "to", "edge_type"),
+    drop = FALSE
+  ]
+  edges <- unique(edges)
+  row.names(edges) <- NULL
+  edges
+}
+
+# One row per unordered sample pair that shares a dependency target through one
+# relation type. Vectorised as a self-merge on (target, edge_type); the number of
+# rows is inherently sum over targets of choose(k, 2), so callers that only need
+# the *grouping* should use `.depgraph_sample_components()` instead.
 .depgraph_shared_dependency_table <- function(graph, via, samples = NULL, edge_types = NULL) {
   node_data <- graph$nodes$data
-  edge_data <- graph$edges$data
   sample_nodes <- .depgraph_resolve_sample_node_ids(graph, samples)
   selected_edge_types <- .depgraph_edge_types_for_via(via, edge_types)
 
-  edges <- edge_data[
-    edge_data$edge_type %in% selected_edge_types &
-      edge_data$from %in% sample_nodes,
-    ,
-    drop = FALSE
-  ]
-
-  rows <- list()
-  row_idx <- 1L
-  sample_key_map <- stats::setNames(node_data$node_key, node_data$node_id)
-  node_type_map <- stats::setNames(node_data$node_type, node_data$node_id)
-
+  edges <- .depgraph_dependency_edges(graph, sample_nodes, selected_edge_types)
   if (nrow(edges) == 0L) {
-    return(data.frame(
-      sample_id_1 = character(),
-      sample_id_2 = character(),
-      sample_node_id_1 = character(),
-      sample_node_id_2 = character(),
-      shared_node_id = character(),
-      shared_node_type = character(),
-      edge_type = character(),
-      stringsAsFactors = FALSE
-    ))
+    return(.depgraph_empty_shared_table())
   }
 
-  split_targets <- split(edges, list(edges$to, edges$edge_type), drop = TRUE)
-  for (group in split_targets) {
-    sample_group <- sort(unique(group$from))
-    if (length(sample_group) < 2L) {
-      next
-    }
-
-    pairs <- utils::combn(sample_group, 2L, simplify = FALSE)
-    for (pair in pairs) {
-      rows[[row_idx]] <- data.frame(
-        sample_id_1 = sample_key_map[[pair[[1L]]]],
-        sample_id_2 = sample_key_map[[pair[[2L]]]],
-        sample_node_id_1 = pair[[1L]],
-        sample_node_id_2 = pair[[2L]],
-        shared_node_id = group$to[[1L]],
-        shared_node_type = node_type_map[[group$to[[1L]]]],
-        edge_type = group$edge_type[[1L]],
-        stringsAsFactors = FALSE
-      )
-      row_idx <- row_idx + 1L
-    }
+  # Only targets linked to at least two samples can produce a pair.
+  target_key <- paste(edges$edge_type, edges$to, sep = "\r")
+  multi <- target_key %in% target_key[duplicated(target_key)]
+  edges <- edges[multi, , drop = FALSE]
+  if (nrow(edges) == 0L) {
+    return(.depgraph_empty_shared_table())
   }
 
-  if (length(rows) == 0L) {
-    return(data.frame(
-      sample_id_1 = character(),
-      sample_id_2 = character(),
-      sample_node_id_1 = character(),
-      sample_node_id_2 = character(),
-      shared_node_id = character(),
-      shared_node_type = character(),
-      edge_type = character(),
-      stringsAsFactors = FALSE
-    ))
+  pairs <- merge(edges, edges, by = c("to", "edge_type"), suffixes = c("_1", "_2"))
+  pairs <- pairs[pairs$from_1 < pairs$from_2, , drop = FALSE]
+  if (nrow(pairs) == 0L) {
+    return(.depgraph_empty_shared_table())
   }
 
-  out <- do.call(rbind, rows)
+  key_map <- stats::setNames(node_data$node_key, node_data$node_id)
+  type_map <- stats::setNames(node_data$node_type, node_data$node_id)
+
+  out <- data.frame(
+    sample_id_1 = unname(key_map[pairs$from_1]),
+    sample_id_2 = unname(key_map[pairs$from_2]),
+    sample_node_id_1 = pairs$from_1,
+    sample_node_id_2 = pairs$from_2,
+    shared_node_id = pairs$to,
+    shared_node_type = unname(type_map[pairs$to]),
+    edge_type = pairs$edge_type,
+    stringsAsFactors = FALSE
+  )
+  out <- out[order(out$edge_type, out$shared_node_id, out$sample_node_id_1, out$sample_node_id_2), , drop = FALSE]
   row.names(out) <- NULL
   out
 }
 
-.depgraph_project_sample_dependencies <- function(graph, via, edge_types = NULL) {
-  shared <- .depgraph_shared_dependency_table(graph, via = via, edge_types = edge_types)
+.depgraph_project_sample_dependencies <- function(shared) {
   if (nrow(shared) == 0L) {
-    return(shared)
+    return(.depgraph_empty_projection())
   }
 
   projection <- unique(shared[, c("sample_node_id_1", "sample_node_id_2"), drop = FALSE])
+  row.names(projection) <- NULL
   projection$projection_edge_id <- paste0("projection_", seq_len(nrow(projection)))
   projection
 }
 
+# Edge ids that participate in the shared-dependency table: every edge of a
+# listed (edge_type, target) whose source sample appears in some pair. Because a
+# sample linked to a multi-sample target always appears in a pair for that
+# target, this equals "all edges into targets that produced pairs".
 .depgraph_shared_dependency_edge_ids <- function(graph, shared_table) {
   if (nrow(shared_table) == 0L) {
     return(character())
   }
 
   edge_data <- graph$edges$data
-  edge_ids <- character()
-  for (i in seq_len(nrow(shared_table))) {
-    relevant_edges <- edge_data[
-      edge_data$edge_type == shared_table$edge_type[[i]] &
-        edge_data$to == shared_table$shared_node_id[[i]] &
-        edge_data$from %in% c(shared_table$sample_node_id_1[[i]], shared_table$sample_node_id_2[[i]]),
-      "edge_id",
-      drop = TRUE
-    ]
-    edge_ids <- c(edge_ids, relevant_edges)
+  involved_samples <- unique(c(shared_table$sample_node_id_1, shared_table$sample_node_id_2))
+  target_keys <- unique(paste(shared_table$edge_type, shared_table$shared_node_id, sep = "\r"))
+  edge_keys <- paste(edge_data$edge_type, edge_data$to, sep = "\r")
+  keep <- edge_keys %in% target_keys & edge_data$from %in% involved_samples
+  unique(edge_data$edge_id[keep])
+}
+
+# Connected components of samples linked through shared targets, computed on the
+# bipartite sample-target graph (plus any extra undirected edges, e.g.
+# subject_related_to or sample_adjacent_to). Linear in nodes + edges; never
+# enumerates sample pairs. Component numbers follow first appearance in
+# `sample_node_ids`, matching the numbering igraph produced for the old
+# projection graph.
+.depgraph_sample_components <- function(sample_node_ids, edges) {
+  n <- length(sample_node_ids)
+  if (n == 0L) {
+    return(list(membership = integer(), size = integer()))
   }
 
-  unique(edge_ids)
+  if (nrow(edges) == 0L) {
+    membership <- seq_len(n)
+  } else {
+    vertices <- unique(c(sample_node_ids, edges$from, edges$to))
+    g <- igraph::graph_from_data_frame(
+      d = data.frame(from = edges$from, to = edges$to, stringsAsFactors = FALSE),
+      vertices = data.frame(name = vertices, stringsAsFactors = FALSE),
+      directed = FALSE
+    )
+    raw <- igraph::components(g)$membership[sample_node_ids]
+    membership <- match(raw, unique(raw))
+  }
+
+  list(
+    membership = as.integer(membership),
+    size = as.integer(tabulate(membership)[membership])
+  )
 }
 
 #' Query Dependency Graph Structure
@@ -392,7 +431,7 @@ query_edge_type <- function(graph, edge_types, node_ids = NULL) {
 #' @export
 query_neighbors <- function(graph, node_ids, edge_types = NULL, node_types = NULL, direction = c("out", "in", "all")) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-  direction <- match.arg(direction)
+  direction <- .depgraph_match_arg(direction, c("out", "in", "all"), "direction")
   seed_ids <- .depgraph_resolve_node_ids(graph, node_ids)
   g <- .depgraph_filter_graph_by_edge_type(graph, edge_types)
 
@@ -473,7 +512,7 @@ query_neighbors <- function(graph, node_ids, edge_types = NULL, node_types = NUL
 #' @export
 query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, mode = c("out", "in", "all"), max_length = NULL) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-  mode <- match.arg(mode)
+  mode <- .depgraph_match_arg(mode, c("out", "in", "all"), "mode")
   from_ids <- .depgraph_resolve_node_ids(graph, from)
   to_ids <- .depgraph_resolve_node_ids(graph, to)
   cutoff_value <- .depgraph_resolve_path_cutoff(max_length)
@@ -537,7 +576,7 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
 #' @export
 query_shortest_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, mode = c("out", "in", "all")) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-  mode <- match.arg(mode)
+  mode <- .depgraph_match_arg(mode, c("out", "in", "all"), "mode")
   from_ids <- .depgraph_resolve_node_ids(graph, from)
   to_ids <- .depgraph_resolve_node_ids(graph, to)
   filtered_graph <- .depgraph_filter_graph_by_edge_type(graph, edge_types)
@@ -584,51 +623,36 @@ query_shortest_paths <- function(graph, from, to, edge_types = NULL, node_types 
 
 #' @rdname query_node_type
 #' @export
-detect_dependency_components <- function(graph, via = c("Subject", "Batch", "Study", "Timepoint", "Assay", "FeatureSet", "Outcome"), edge_types = NULL, min_size = 1) {
+detect_dependency_components <- function(graph,
+                                         via = c("Subject", "Batch", "Study", "Timepoint",
+                                                 "Assay", "FeatureSet", "Outcome"),
+                                         edge_types = NULL, min_size = 1) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-  shared <- .depgraph_shared_dependency_table(graph, via = via, edge_types = edge_types)
-  projection <- .depgraph_project_sample_dependencies(graph, via = via, edge_types = edge_types)
   sample_nodes <- graph$nodes$data[graph$nodes$data$node_type == "Sample", , drop = FALSE]
+  selected_edge_types <- .depgraph_edge_types_for_via(via, edge_types)
 
-  sample_graph <- if (nrow(projection) == 0L) {
-    igraph::make_empty_graph(n = nrow(sample_nodes), directed = FALSE)
-  } else {
-    g <- igraph::graph_from_data_frame(
-      d = data.frame(
-        from = projection$sample_node_id_1,
-        to = projection$sample_node_id_2,
-        stringsAsFactors = FALSE
-      ),
-      vertices = data.frame(name = sample_nodes$node_id, stringsAsFactors = FALSE),
-      directed = FALSE
-    )
-    g
-  }
-  igraph::V(sample_graph)$name <- sample_nodes$node_id
-
-  components <- igraph::components(sample_graph)
+  # Grouping first, on the bipartite sample-target graph (linear); the explicit
+  # pair table below is only materialised for the samples that survive min_size.
+  dep_edges <- .depgraph_dependency_edges(graph, sample_nodes$node_id, selected_edge_types)
+  comps <- .depgraph_sample_components(sample_nodes$node_id, dep_edges)
   table <- data.frame(
     sample_id = sample_nodes$node_key,
     sample_node_id = sample_nodes$node_id,
-    component_id = paste0("component_", components$membership[match(sample_nodes$node_id, names(components$membership))]),
-    component_size = components$csize[components$membership[match(sample_nodes$node_id, names(components$membership))]],
+    component_id = paste0("component_", comps$membership),
+    component_size = comps$size,
     stringsAsFactors = FALSE
   )
 
   table <- table[table$component_size >= min_size, , drop = FALSE]
+  row.names(table) <- NULL
   keep_nodes <- table$sample_node_id
-  projection <- projection[
-    projection$sample_node_id_1 %in% keep_nodes &
-      projection$sample_node_id_2 %in% keep_nodes,
-    ,
-    drop = FALSE
-  ]
-  shared <- shared[
-    shared$sample_node_id_1 %in% keep_nodes &
-      shared$sample_node_id_2 %in% keep_nodes,
-    ,
-    drop = FALSE
-  ]
+
+  shared <- if (length(keep_nodes) == 0L) {
+    .depgraph_empty_shared_table()
+  } else {
+    .depgraph_shared_dependency_table(graph, via = via, samples = keep_nodes, edge_types = edge_types)
+  }
+  projection <- .depgraph_project_sample_dependencies(shared)
   edge_ids <- .depgraph_shared_dependency_edge_ids(graph, shared)
 
   .depgraph_query_result(

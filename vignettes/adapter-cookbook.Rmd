@@ -34,18 +34,24 @@ if (requireNamespace("pkgload", quietly = TRUE) &&
 `splitGraph` ends at a `split_spec` object. It deliberately knows nothing
 about `rsample`, `tidymodels`, or any other resampling engine. The handoff
 contract is the `sample_data` table inside the spec plus a few scalar
-fields (`group_var`, `block_vars`, `time_var`, `ordering_required`,
-`recommended_resampling`), together with provenance the adapter can inspect
-to choose a strategy (`constraint_mode`, `constraint_strategy`).
+fields (`group_var`, `block_vars`, `time_var`, `stratum_var`,
+`ordering_required`, `recommended_resampling`), together with provenance the
+adapter can inspect to choose a strategy (`constraint_mode`,
+`constraint_strategy`).
 
 You do not always have to write this glue yourself. The reference downstream
 consumer, [**bioLeak**](https://github.com/selcukorkmaz/bioLeak), takes a
 `split_spec` directly — `bioLeak::as_leaksplits(spec, data, outcome)` builds an
-executable, leakage-audited split plan from it. This cookbook is for the other
-case: when you want to feed a `split_spec` into a different engine, or
-understand exactly what a consumer has to honor. It shows three small,
-self-contained adapters that turn a `split_spec` into something a downstream
-workflow can use:
+executable, leakage-audited split plan from it. The released bioLeak (0.3.8)
+reads the `subject`, `batch`, `study` and `time` modes; for the others,
+including `composite`, hand it the grouping column instead
+(`bioLeak::make_split_plan(joined, outcome, mode = "subject_grouped",
+group = "group_id")`), which produces the same split by a different route.
+
+This cookbook is for the other case: when you want to feed a `split_spec` into a
+different engine, or understand exactly what a consumer has to honor. It shows
+three small, self-contained adapters that turn a `split_spec` into something a
+downstream workflow can use:
 
 1. A **base-R adapter** that returns a list of `(train, test)` row-index
    pairs — runnable here, no extra dependencies.
@@ -54,9 +60,9 @@ workflow can use:
 3. An **`rsample::rolling_origin()`** adapter for ordered evaluation keyed
    to `order_rank`.
 
-Adapters 2 and 3 show idiomatic glue but are not evaluated in this
-vignette so that `splitGraph` does not pick up `rsample` as a build-time
-dependency.
+Adapters 2 and 3 are evaluated when `rsample` is installed (it is in
+`Suggests`, never in `Imports`: `splitGraph` itself has no resampling
+dependency) and shown as code otherwise.
 
 The same pattern works for any other resampling library you happen to use.
 
@@ -116,6 +122,7 @@ logo_folds <- function(spec, observation_data, sample_id_col = "sample_id") {
 }
 
 # Pretend we have an observation frame keyed by sample_id.
+set.seed(1)
 obs <- data.frame(
   sample_id = meta$sample_id,
   x = rnorm(nrow(meta)),
@@ -168,13 +175,53 @@ Every batch appears on both sides, because grouping by subject does not also
 block by batch. Whether that matters is a scientific decision — the point is
 that the spec carries enough information for the adapter to make it.
 
+### Honoring the stratum annotation
+
+`stratum_var` names one more column: the outcome level each sample carries.
+`splitGraph` records it and stops there — it never balances folds itself — so
+stratification is the adapter's job, and the spec hands it the input.
+
+```{r stratum}
+spec$stratum_var
+spec$sample_data[, c("sample_id", spec$group_var, spec$stratum_var)]
+```
+
+There is a catch worth knowing before you wire it into a resampler's `strata`
+argument. The annotation is *per sample*, while the split unit is the group, and
+the two need not agree: here every subject contributes one `case` and one
+`ctrl`, so no group has a single stratum at all.
+
+```{r stratum-constant}
+tapply(spec$sample_data$stratum, spec$sample_data$group_id,
+       function(x) length(unique(x)) == 1L)
+```
+
+A grouped resampler that stratifies needs one stratum per *group*, and says so
+plainly when it does not get one:
+
+```{r stratum-rsample, eval = requireNamespace("rsample", quietly = TRUE)}
+joined_s <- merge(obs, spec$sample_data[, c("sample_id", "group_id", "stratum")],
+                  by = "sample_id", sort = FALSE)
+
+tryCatch(
+  rsample::group_vfold_cv(joined_s, group = "group_id", v = 3, strata = "stratum"),
+  error = function(e) conditionMessage(e)
+)
+```
+
+So the adapter has to decide how to get there — summarise the annotation to the
+group level (the group's only label when it has one, a majority label otherwise),
+stratify on a blocking variable that *is* constant within the group, or accept
+unbalanced folds. `splitGraph` deliberately does not pick for you; it records
+what each sample is so the choice is visible instead of silent.
+
 ## Adapter 2 — `rsample::group_vfold_cv()`
 
 Grouped CV keyed to `group_id`. The downstream package would typically
 ship something like this; the adapter is short enough that you can paste
 it into your own analysis script.
 
-```{r adapter-rsample-group, eval=FALSE}
+```{r adapter-rsample-group, eval = requireNamespace("rsample", quietly = TRUE)}
 spec_to_group_vfold <- function(spec, observation_data,
                                 v = NULL,
                                 sample_id_col = "sample_id") {
@@ -205,12 +252,21 @@ right default when `splitGraph` has already grouped samples by their
 deepest leakage-relevant unit (e.g. subject). Pick a smaller `v` for
 k-fold-style grouped CV.
 
+```{r adapter-rsample-group-run, eval = requireNamespace("rsample", quietly = TRUE)}
+grouped <- spec_to_group_vfold(spec, obs)
+grouped
+# Every assessment set is exactly one subject's samples:
+vapply(grouped$splits, function(s) {
+  paste(sort(unique(rsample::assessment(s)$group_id)), collapse = ", ")
+}, character(1))
+```
+
 ## Adapter 3 — `rsample::rolling_origin()`
 
 When `spec$ordering_required` is `TRUE` (or `spec$time_var` is set), the
 right downstream object is an ordered split rather than a grouped one.
 
-```{r adapter-rsample-rolling, eval=FALSE}
+```{r adapter-rsample-rolling, eval = requireNamespace("rsample", quietly = TRUE)}
 spec_to_rolling_origin <- function(spec, observation_data,
                                    sample_id_col = "sample_id",
                                    initial = NULL,
@@ -235,14 +291,74 @@ spec_to_rolling_origin <- function(spec, observation_data,
 }
 ```
 
+```{r adapter-rsample-rolling-run, eval = requireNamespace("rsample", quietly = TRUE)}
+rolling <- spec_to_rolling_origin(spec, obs, initial = 3, assess = 1)
+rolling
+# No analysis sample comes after any assessment sample:
+vapply(rolling$splits, function(s) {
+  max(rsample::analysis(s)$order_rank) <= min(rsample::assessment(s)$order_rank)
+}, logical(1))
+```
+
 The key idea: `splitGraph` puts ordering information on the spec; the
 adapter is just a thin shim that consumes it.
+
+### Two things to check before trusting an ordered adapter
+
+**`order_rank` has ties, and row-wise slicing ignores them.** `order_rank` is a
+rank over *timepoints*, not over rows, so every sample collected at the same
+timepoint shares a value — here six samples carry just two distinct ranks. A
+resampler that slices by row position will therefore put part of a timepoint in
+the analysis set and the rest in the assessment set:
+
+```{r rolling-ties, eval = requireNamespace("rsample", quietly = TRUE)}
+length(unique(spec$sample_data$order_rank))   # distinct ranks
+nrow(spec$sample_data)                        # rows
+
+vapply(rolling$splits, function(s) {
+  shared <- intersect(rsample::analysis(s)$order_rank,
+                      rsample::assessment(s)$order_rank)
+  paste(shared, collapse = ", ")
+}, character(1))
+```
+
+Slices 2 and 3 share rank `2`: one `T1` sample is being predicted while another
+`T1` sample is in training. If your evaluation requires that a whole timepoint
+be held out, cut on rank boundaries rather than row counts — choose `initial` so
+it falls at a change of `order_rank`, or group the rows by rank first. The spec
+gives you the rank; only you know whether ties are acceptable.
+
+**`rolling_origin()` is superseded.** It still works and is not deprecated, but
+rsample now steers users to `sliding_window()` / `sliding_index()` /
+`sliding_period()`, where active development happens. The equivalent call is:
+
+```{r sliding-window, eval = requireNamespace("rsample", quietly = TRUE)}
+joined  <- merge(obs, spec$sample_data[, c("sample_id", spec$time_var)],
+                 by = "sample_id", sort = FALSE)
+ordered <- joined[order(joined[[spec$time_var]]), , drop = FALSE]
+
+sliding <- rsample::sliding_window(
+  ordered,
+  lookback     = Inf,   # cumulative analysis window, like rolling_origin()
+  assess_stop  = 1,
+  complete     = FALSE,
+  skip         = 2      # start where `initial = 3` did
+)
+
+identical(
+  lapply(sliding$splits, function(s) rsample::assessment(s)$sample_id),
+  lapply(rolling$splits, function(s) rsample::assessment(s)$sample_id)
+)
+```
+
+Either way the adapter is the same shim; only the rsample entry point changes.
 
 ## Going across language boundaries via JSON
 
 If the downstream consumer is not in R, write the spec to JSON and let the
 consumer interpret it. The on-disk format is a formal, versioned contract: it
-has a JSON Schema (Draft 2020-12) shipped in `inst/schema/`, each file names it
+has a JSON Schema (Draft 2020-12) shipped in `inst/schema/<schema_version>/`,
+each file names it
 via a `$schema` key, and `validate_split_spec_json()` checks a file against it
 before you consume it.
 
@@ -304,9 +420,51 @@ time_spec <- as_split_spec(derive_split_constraints(g, mode = "time"), graph = g
 recommend_adapter(time_spec)
 ```
 
-`recommended_resampling` is only a hint — your adapter is free to override it —
-but it lets one entry point serve every constraint mode without inspecting the
-graph.
+Those five branches are the whole vocabulary: `recommended_resampling` takes one
+of exactly `grouped_cv`, `blocked_cv`, `leave_one_group_out`, `ordered_split` and
+`custom_grouped_cv`, whatever the mode. Eleven modes map onto them like this:
+
+| `recommended_resampling` | Modes that produce it |
+|---|---|
+| `grouped_cv` | `subject`, `region`, `assay`, `relatedness`, `spatial`, `composite` (rule-based) |
+| `blocked_cv` | `batch`, `platform` |
+| `leave_one_group_out` | `study`, `site` |
+| `ordered_split` | `time` |
+| `custom_grouped_cv` | `composite` (strict) |
+
+```{r dispatch-exhaustive}
+# One graph carrying every direct relation, so each mode has something to group.
+g_all <- graph_from_metadata(transform(
+  meta,
+  site_id     = c("N", "N", "N", "B", "B", "B"),
+  region_id   = "ctx",
+  platform_id = "il",
+  assay_id    = "rna"
+))
+
+modes <- c("subject", "batch", "study", "time",
+           "site", "region", "platform", "assay")
+vapply(modes, function(m) {
+  as_split_spec(derive_split_constraints(g_all, mode = m),
+                graph = g_all)$recommended_resampling
+}, character(1))
+
+# And the two composite strategies, which supply the fifth value.
+c(
+  strict = as_split_spec(derive_split_constraints(
+    g_all, mode = "composite", strategy = "strict",
+    via = c("Subject", "Batch")), graph = g_all)$recommended_resampling,
+  rule_based = as_split_spec(derive_split_constraints(
+    g_all, mode = "composite", strategy = "rule_based",
+    priority = c("subject", "batch")), graph = g_all)$recommended_resampling
+)
+```
+
+So a dispatcher with those five branches cannot be surprised by a spec, and the
+`default` arm above is belt and braces rather than a real fallback.
+`recommended_resampling` is still only a hint — your adapter is free to override
+it — but it lets one entry point serve every constraint mode without inspecting
+the graph.
 
 ## When you need a custom adapter
 
@@ -318,10 +476,15 @@ The only assumptions an adapter has to honor:
   the graph these include `batch_group`, `study_group`, `site_group`,
   `region_group`, `platform_group`, and `assay_group` — an adapter can block or
   stratify on any that are present.
-- `split_spec$time_var`, when non-`NULL`, defines the ordering.
+- `split_spec$time_var`, when non-`NULL`, defines the ordering. Its values are
+  ranks over timepoints, so ties are expected and meaningful.
+- `split_spec$stratum_var`, when non-`NULL`, names the per-sample outcome level.
+  It is an annotation: `splitGraph` never balances folds, and the value is not
+  guaranteed constant within a group.
 - `split_spec$recommended_resampling` is a hint, not a contract — your
-  adapter is free to ignore it. `constraint_mode` / `constraint_strategy` are
-  available if you want to branch (e.g. treat `"time"` specs as ordered).
+  adapter is free to ignore it. It is one of five documented strings.
+  `constraint_mode` / `constraint_strategy` are available if you want to branch
+  (e.g. treat `"time"` specs as ordered).
 
 That is the whole interface, and it is stable: `bioLeak::as_leaksplits()`
 consumes exactly these fields, and a contract test in splitGraph pins the seam

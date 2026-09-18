@@ -2,9 +2,18 @@
 % Please edit documentation in R/graph-build-auto.R
 \name{graph_from_metadata}
 \alias{graph_from_metadata}
+\alias{graph_from_metadata.default}
+\alias{graph_from_metadata.SummarizedExperiment}
+\alias{graph_from_metadata.data.frame}
 \title{Build a Dependency Graph Directly from a Metadata Table}
 \usage{
-graph_from_metadata(
+graph_from_metadata(meta, ...)
+
+\method{graph_from_metadata}{default}(meta, ...)
+
+\method{graph_from_metadata}{SummarizedExperiment}(meta, ..., sample_id_col = NULL)
+
+\method{graph_from_metadata}{data.frame}(
   meta,
   columns = NULL,
   dataset_name = NULL,
@@ -12,15 +21,25 @@ graph_from_metadata(
   outcome_scope = c("sample", "subject"),
   time_precedence = TRUE,
   validate = TRUE,
-  validation_overrides = list()
+  validation_overrides = list(),
+  ...
 )
 }
 \arguments{
 \item{meta}{A \code{data.frame} containing one row per sample and optional
 canonical columns: \code{sample_id} (required), \code{subject_id},
 \code{batch_id}, \code{study_id}, \code{timepoint_id}, \code{time_index},
-\code{assay_id}, \code{featureset_id}, \code{outcome_id}, or
-\code{outcome_value}.}
+\code{assay_id}, \code{featureset_id}, \code{site_id}, \code{region_id},
+\code{platform_id}, \code{outcome_id}, or \code{outcome_value}.
+Identifier columns may be character, factor, or numeric; they are
+coerced to character by \code{ingest_metadata()}.}
+
+\item{...}{Passed on to the \code{data.frame} method.}
+
+\item{sample_id_col}{For the \code{SummarizedExperiment} method: the
+\code{colData} column holding sample identifiers. When \code{NULL}
+(default) a \code{sample_id} column is used if present, otherwise the
+assay column names (\code{colnames(se)}) become the sample identifiers.}
 
 \item{columns}{Optional named character vector passed to
 \code{ingest_metadata()} to rename user columns to canonical names.}
@@ -47,6 +66,17 @@ metadata table, creates the corresponding node and edge sets, optionally
 derives timepoint ordering from \code{time_index}, and assembles a
 \code{dependency_graph}. Columns that are absent or entirely missing are
 silently skipped.
+}
+\details{
+\code{graph_from_metadata()} is an S3 generic. The \code{data.frame} method
+is the one described above. The \code{SummarizedExperiment} method (used
+when Bioconductor's \pkg{SummarizedExperiment} is installed) converts
+\code{colData(se)} to a data frame, adds \code{sample_id} from the assay
+column names when \code{colData} has no such column, and dispatches to the
+\code{data.frame} method; \code{columns} maps \code{colData} names to the
+canonical ones exactly as for a data frame. A worked example is in
+\code{vignette("faq-design-notes")}; it is kept out of the examples below
+because attaching Bioconductor packages dominates their run time.
 }
 \examples{
 meta <- data.frame(

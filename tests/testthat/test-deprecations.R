@@ -1,3 +1,7 @@
+# The 0.1-era aliases were deprecated in 0.2.0 and removed in 0.4.0. These
+# tests pin the removal so the names cannot silently come back, and check the
+# canonical replacements work without warnings.
+
 make_simple_graph <- function() {
   meta <- data.frame(
     sample_id  = c("S1", "S2"),
@@ -13,86 +17,33 @@ make_simple_graph <- function() {
   build_dependency_graph(list(samples, subjects), list(edges))
 }
 
-test_that("validate_graph(checks = ...) is deprecated but still works", {
-  g <- make_simple_graph()
-
-  # Default call (no `checks` supplied) must NOT warn.
-  expect_silent(validate_graph(g))
-
-  # Explicit `checks` triggers a deprecation warning.
-  expect_warning(
-    report <- validate_graph(g, checks = c("ids", "references")),
-    "deprecated",
-    ignore.case = TRUE
+test_that("the removed 0.1-era aliases are no longer exported", {
+  removed <- c(
+    "new_depgraph", "new_depgraph_nodes", "new_depgraph_edges",
+    "build_depgraph", "validate_depgraph"
   )
-  expect_s3_class(report, "depgraph_validation_report")
-  expect_true(report$valid)
+  exported <- getNamespaceExports("splitGraph")
+  expect_false(any(removed %in% exported))
+  for (name in removed) {
+    expect_false(exists(name, envir = asNamespace("splitGraph"), inherits = FALSE), info = name)
+  }
 })
 
-test_that("validate_graph() recommended path (levels=) is silent and equivalent", {
+test_that("validate_graph() no longer accepts the removed `checks` argument", {
+  g <- make_simple_graph()
+  expect_error(validate_graph(g, checks = c("ids", "references")), "unused argument")
+})
+
+test_that("validate_graph() recommended path (levels=) is silent", {
   g <- make_simple_graph()
 
   expect_silent(report <- validate_graph(g, levels = c("structural", "semantic")))
   expect_s3_class(report, "depgraph_validation_report")
   expect_true(report$valid)
+  expect_identical(report$metadata$levels, c("structural", "semantic"))
 })
 
-test_that("alias functions are deprecated but still functional", {
-  meta <- data.frame(
-    sample_id  = c("S1", "S2"),
-    subject_id = c("P1", "P2"),
-    stringsAsFactors = FALSE
-  )
-  samples <- create_nodes(meta, type = "Sample", id_col = "sample_id")
-  subjects <- create_nodes(meta, type = "Subject", id_col = "subject_id")
-  edges <- create_edges(
-    meta, "sample_id", "subject_id",
-    "Sample", "Subject", "sample_belongs_to_subject"
-  )
-
-  expect_warning(
-    g <- build_depgraph(list(samples, subjects), list(edges)),
-    "deprecated", ignore.case = TRUE
-  )
-  expect_s3_class(g, "dependency_graph")
-
-  expect_warning(
-    report <- validate_depgraph(g),
-    "deprecated", ignore.case = TRUE
-  )
-  expect_s3_class(report, "depgraph_validation_report")
-
-  # Constructor aliases.
-  expect_warning(
-    n <- new_depgraph_nodes(),
-    "deprecated", ignore.case = TRUE
-  )
-  expect_s3_class(n, "graph_node_set")
-
-  expect_warning(
-    e <- new_depgraph_edges(),
-    "deprecated", ignore.case = TRUE
-  )
-  expect_s3_class(e, "graph_edge_set")
-
-  # new_depgraph wraps dependency_graph(), which expects already-bound
-  # node/edge sets — we mimic build_dependency_graph()'s assembly:
-  bound_nodes <- graph_node_set(rbind(
-    as.data.frame(create_nodes(meta, "Sample", "sample_id")),
-    as.data.frame(create_nodes(meta, "Subject", "subject_id"))
-  ))
-  bound_edges <- create_edges(
-    meta, "sample_id", "subject_id",
-    "Sample", "Subject", "sample_belongs_to_subject"
-  )
-  expect_warning(
-    nd <- new_depgraph(nodes = bound_nodes, edges = bound_edges, graph = NULL),
-    "deprecated", ignore.case = TRUE
-  )
-  expect_s3_class(nd, "dependency_graph")
-})
-
-test_that("the canonical (non-deprecated) constructors produce no warnings", {
+test_that("the canonical constructors produce no warnings", {
   meta <- data.frame(
     sample_id = c("S1", "S2"),
     subject_id = c("P1", "P2"),
@@ -112,4 +63,9 @@ test_that("the canonical (non-deprecated) constructors produce no warnings", {
     "Sample", "Subject", "sample_belongs_to_subject"
   )
   expect_silent(build_dependency_graph(list(samples, subjects), list(edges)))
+  expect_silent(dependency_graph(
+    nodes = graph_node_set(rbind(samples$data, subjects$data)),
+    edges = edges,
+    graph = NULL
+  ))
 })

@@ -34,7 +34,7 @@ test_that("written JSON carries a $schema reference and the current version", {
 
   raw <- jsonlite::fromJSON(tmp, simplifyVector = FALSE)
   expect_match(raw$`$schema`, "dependency_graph\\.schema\\.json$")
-  expect_identical(raw$schema_version, "0.2.0")
+  expect_identical(raw$schema_version, "0.3.0")
   expect_identical(raw$schema_version, splitGraph:::.depgraph_schema_version)
 })
 
@@ -57,7 +57,7 @@ test_that("validate_graph_json flags dangling edge endpoints and unknown types",
   skip_if_no_jsonlite()
   bad <- list(
     splitGraph_object = "dependency_graph",
-    schema_version = "0.2.0",
+    schema_version = "0.3.0",
     nodes = list(list(node_id = "sample:S1", node_type = "Sample", node_key = "S1")),
     edges = list(list(
       edge_id = "e1", from = "sample:S1", to = "subject:P9",
@@ -99,7 +99,7 @@ test_that("validate_split_spec_json passes a well-formed spec and flags missing 
 
   bad <- list(
     splitGraph_object = "split_spec",
-    schema_version = "0.2.0",
+    schema_version = "0.3.0",
     group_var = "group_id",
     sample_data = list(list(sample_id = "S1"))  # missing group_id
   )
@@ -160,7 +160,7 @@ test_that("migrate_split_spec_json upgrades an old-version file to current", {
   migrate_split_spec_json(tmp)
 
   raw <- jsonlite::fromJSON(tmp, simplifyVector = FALSE)
-  expect_identical(raw$schema_version, "0.2.0")
+  expect_identical(raw$schema_version, "0.3.0")
   expect_match(raw$`$schema`, "split_spec\\.schema\\.json$")
   # New columns are now present in every row.
   row1 <- raw$sample_data[[1L]]
@@ -205,19 +205,21 @@ test_that("validate_graph_json flags malformed and non-array node collections", 
   skip_if_no_jsonlite()
   # Node missing required fields.
   missing_fields <- list(
-    splitGraph_object = "dependency_graph", schema_version = "0.2.0",
+    splitGraph_object = "dependency_graph", schema_version = "0.3.0",
     nodes = list(list(node_id = "sample:S1")), edges = list()
   )
-  tmp1 <- tempfile(fileext = ".json"); on.exit(unlink(tmp1), add = TRUE)
+  tmp1 <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp1), add = TRUE)
   writeLines(jsonlite::toJSON(missing_fields, auto_unbox = TRUE, null = "null"), tmp1)
   expect_true(any(grepl("required strings", validate_graph_json(tmp1)$issues)))
 
   # `nodes` is a scalar, not an array.
   not_array <- list(
-    splitGraph_object = "dependency_graph", schema_version = "0.2.0",
+    splitGraph_object = "dependency_graph", schema_version = "0.3.0",
     nodes = "oops", edges = list()
   )
-  tmp2 <- tempfile(fileext = ".json"); on.exit(unlink(tmp2), add = TRUE)
+  tmp2 <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp2), add = TRUE)
   writeLines(jsonlite::toJSON(not_array, auto_unbox = TRUE, null = "null"), tmp2)
   expect_true(any(grepl("`nodes` must be an array", validate_graph_json(tmp2)$issues)))
 })
@@ -260,7 +262,7 @@ test_that("migrate_dependency_graph_json upgrades an old-version graph file", {
   migrate_dependency_graph_json(tmp)
 
   out <- jsonlite::fromJSON(tmp, simplifyVector = FALSE)
-  expect_identical(out$schema_version, "0.2.0")
+  expect_identical(out$schema_version, "0.3.0")
   expect_match(out[["$schema"]], "dependency_graph\\.schema\\.json$")
   expect_true(validate_graph_json(tmp)$valid)
 })
@@ -270,18 +272,103 @@ test_that("migrate_dependency_graph_json upgrades an old-version graph file", {
 test_that("print.splitgraph_json_report shows issues only when invalid", {
   skip_if_no_jsonlite()
   g <- make_spec_graph()
-  good_path <- tempfile(fileext = ".json"); on.exit(unlink(good_path), add = TRUE)
+  good_path <- tempfile(fileext = ".json")
+  on.exit(unlink(good_path), add = TRUE)
   write_dependency_graph(g, good_path)
   valid_out <- capture.output(print(validate_graph_json(good_path)))
   expect_true(any(grepl("valid:.*TRUE", valid_out)))
   expect_false(any(grepl("issues:", valid_out)))
 
-  bad <- list(splitGraph_object = "split_spec", schema_version = "0.2.0",
+  bad <- list(splitGraph_object = "split_spec", schema_version = "0.3.0",
               group_var = "group_id",
               sample_data = list(list(sample_id = "S1")))  # missing group_id
-  bad_path <- tempfile(fileext = ".json"); on.exit(unlink(bad_path), add = TRUE)
+  bad_path <- tempfile(fileext = ".json")
+  on.exit(unlink(bad_path), add = TRUE)
   writeLines(jsonlite::toJSON(bad, auto_unbox = TRUE, null = "null"), bad_path)
   invalid_out <- capture.output(print(validate_split_spec_json(bad_path)))
   expect_true(any(grepl("valid:.*FALSE", invalid_out)))
   expect_true(any(grepl("issues:", invalid_out)))
+})
+
+test_that("read_*(validate = TRUE) rejects non-conforming or invalid files with classed errors", {
+  skip_if_not_installed("jsonlite")
+  meta <- data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2"), batch_id = c("B1", "B1"),
+                     stringsAsFactors = FALSE)
+  g <- graph_from_metadata(meta)
+  ok <- tempfile(fileext = ".json")
+  on.exit(unlink(ok), add = TRUE)
+  write_dependency_graph(g, ok)
+  expect_s3_class(read_dependency_graph(ok, validate = TRUE), "dependency_graph")
+
+  # A schema violation (attrs as an array) is caught before parsing.
+  raw <- jsonlite::fromJSON(ok, simplifyVector = FALSE)
+  raw$nodes[[1]]$attrs <- list("not", "an", "object")
+  bad <- tempfile(fileext = ".json")
+  on.exit(unlink(bad), add = TRUE)
+  writeLines(jsonlite::toJSON(raw, auto_unbox = TRUE, null = "null", na = "null"), bad)
+  rep <- validate_graph_json(bad)
+  expect_false(rep$valid)
+  expect_true(any(grepl("attrs", rep$issues)))
+  expect_error(read_dependency_graph(bad, validate = TRUE), class = "splitgraph_schema_error")
+  # The lenient default skips the schema check, but the constructor still
+  # refuses malformed attrs; the error is then a generic splitgraph_error.
+  expect_error(read_dependency_graph(bad), class = "splitgraph_error")
+
+  # A well-formed file whose graph fails validate_graph() (two batches per sample).
+  extra <- data.frame(sample_id = "S1", batch_id = "B2", stringsAsFactors = FALSE)
+  rows <- rbind(meta[, c("sample_id", "batch_id")], extra)
+  g_bad <- build_dependency_graph(
+    list(create_nodes(meta, "Sample", "sample_id"), create_nodes(rows, "Batch", "batch_id")),
+    list(create_edges(rows, "sample_id", "batch_id", "Sample", "Batch", "sample_processed_in_batch")),
+    validate = FALSE
+  )
+  invalid <- tempfile(fileext = ".json")
+  on.exit(unlink(invalid), add = TRUE)
+  write_dependency_graph(g_bad, invalid)
+  expect_error(read_dependency_graph(invalid, validate = TRUE), class = "splitgraph_validation_error")
+
+  # split_spec: a wrong column type is a schema violation; a missing group is a validation failure.
+  spec <- as_split_spec(derive_split_constraints(g, "subject"), graph = g)
+  sp <- tempfile(fileext = ".json")
+  on.exit(unlink(sp), add = TRUE)
+  write_split_spec(spec, sp)
+  expect_s3_class(read_split_spec(sp, validate = TRUE), "split_spec")
+  raw <- jsonlite::fromJSON(sp, simplifyVector = FALSE)
+  raw$sample_data[[1]]$time_index <- "not-a-number"
+  raw$metadata$relations_used <- "bare-string"
+  bad_sp <- tempfile(fileext = ".json")
+  on.exit(unlink(bad_sp), add = TRUE)
+  writeLines(jsonlite::toJSON(raw, auto_unbox = TRUE, null = "null", na = "null"), bad_sp)
+  rep <- validate_split_spec_json(bad_sp)
+  expect_false(rep$valid)
+  expect_true(any(grepl("time_index", rep$issues)))
+  expect_true(any(grepl("relations_used", rep$issues)))
+  expect_error(read_split_spec(bad_sp, validate = TRUE), class = "splitgraph_schema_error")
+})
+
+test_that("a 0.2.0 split_spec (no stratum) loads silently and migrates to 0.3.0", {
+  skip_if_not_installed("jsonlite")
+  meta <- data.frame(sample_id = c("S1", "S2"), subject_id = c("P1", "P2"), stringsAsFactors = FALSE)
+  g <- graph_from_metadata(meta)
+  spec <- as_split_spec(derive_split_constraints(g, "subject"), graph = g)
+  path <- tempfile(fileext = ".json")
+  on.exit(unlink(path), add = TRUE)
+  write_split_spec(spec, path)
+  raw <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  raw$schema_version <- "0.2.0"
+  raw$stratum_var <- NULL
+  raw$sample_data <- lapply(raw$sample_data, function(r) {
+    r$stratum <- NULL
+    r
+  })
+  writeLines(jsonlite::toJSON(raw, auto_unbox = TRUE, null = "null", na = "null"), path)
+
+  expect_silent(old <- read_split_spec(path))
+  expect_true(all(is.na(old$sample_data$stratum)))
+  expect_null(old$stratum_var)
+  migrate_split_spec_json(path)
+  migrated <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  expect_identical(migrated$schema_version, "0.3.0")
+  expect_true(grepl("/0.3.0/", migrated[["$schema"]], fixed = TRUE))
+  expect_true("stratum" %in% names(migrated$sample_data[[1]]))
 })

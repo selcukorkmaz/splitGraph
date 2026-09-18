@@ -21,7 +21,25 @@ spec = load_split_spec("split_spec.json")
 spec.grouping()      # {sample_id: group_id}, == R grouping_vector()
 spec.groups()        # group_id per sample, for GroupKFold(groups=...)
 spec.order_ranks()   # order_rank per sample, for TimeSeriesSplit
+spec.strata()        # stratum per sample (spec.stratum_var), for StratifiedGroupKFold(y=...)
 spec.to_frame()      # pandas DataFrame of sample_data
+
+for train_idx, test_idx in spec.stratified_group_kfold(n_splits=5):
+    ...               # grouped on group_id, stratified on the stratum annotation
+```
+
+`stratum_var` / `stratum` were added in schema 0.3.0 (splitGraph 0.4.0); files
+written by earlier versions load with `spec.stratum_var is None` and
+`spec.strata()` returning `None` for every sample. The reader accepts every
+schema with major version 0.
+
+## Installing as a package
+
+`pyproject.toml` in this directory packages the reader as `splitspec`:
+
+```bash
+pip install <path to this inst/python directory>          # reader only
+pip install "<path to this inst/python directory>[sklearn]" # + scikit-learn helpers
 ```
 
 In R, locate this directory with:

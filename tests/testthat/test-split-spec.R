@@ -262,3 +262,68 @@ test_that("summarize_leakage_risks reports a failing preflight and phantom block
   # The phantom block variable is reported as available for 0 samples.
   expect_true(any(grepl("phantom_group.*for 0 of", df$message)))
 })
+
+test_that("as_split_spec enrichment tolerates ambiguous graph annotations", {
+  # A graph built with validate = FALSE can carry a sample linked to two
+  # batches. Enrichment must not abort a subject-mode translation because of
+  # an annotation it cannot resolve; it leaves the column NA and says why.
+  meta <- data.frame(
+    sample_id  = c("S1", "S2"),
+    subject_id = c("P1", "P2"),
+    batch_id   = c("B1", "B1"),
+    stringsAsFactors = FALSE
+  )
+  extra <- data.frame(sample_id = "S1", batch_id = "B2", stringsAsFactors = FALSE)
+  batch_rows <- rbind(meta[, c("sample_id", "batch_id")], extra)
+
+  g <- build_dependency_graph(
+    list(
+      create_nodes(meta, "Sample", "sample_id"),
+      create_nodes(meta, "Subject", "subject_id"),
+      create_nodes(batch_rows, "Batch", "batch_id")
+    ),
+    list(
+      create_edges(meta, "sample_id", "subject_id", "Sample", "Subject", "sample_belongs_to_subject"),
+      create_edges(batch_rows, "sample_id", "batch_id", "Sample", "Batch", "sample_processed_in_batch")
+    ),
+    validate = FALSE
+  )
+  expect_false(validate_graph(g)$valid)
+
+  constraint <- derive_split_constraints(g, mode = "subject")
+  spec <- as_split_spec(constraint, graph = g)
+
+  expect_s3_class(spec, "split_spec")
+  expect_identical(spec$sample_data$group_id, c("subject:P1", "subject:P2"))
+  expect_true(all(is.na(spec$sample_data$batch_group)))
+  expect_false("batch_group" %in% spec$block_vars)
+  expect_length(spec$metadata$enrichment_warnings, 1L)
+  expect_match(spec$metadata$enrichment_warnings, "batch_group")
+  expect_match(spec$metadata$enrichment_warnings, "Multiple batch assignments")
+  expect_true(all(spec$metadata$enrichment_warnings %in% spec$metadata$warnings))
+  expect_null(attr(spec$sample_data, "enrichment_warnings"))
+  expect_true(validate_split_spec(spec)$valid)
+
+  skip_if_not_installed("jsonlite")
+  tmp <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp), add = TRUE)
+  write_split_spec(spec, tmp)
+  back <- read_split_spec(tmp)
+  expect_identical(back$metadata$enrichment_warnings, spec$metadata$enrichment_warnings)
+})
+
+test_that("as_split_spec enrichment on a clean graph records no enrichment warnings", {
+  meta <- data.frame(
+    sample_id  = c("S1", "S2", "S3"),
+    subject_id = c("P1", "P1", "P2"),
+    batch_id   = c("B1", "B2", "B1"),
+    stringsAsFactors = FALSE
+  )
+  g <- graph_from_metadata(meta)
+  spec <- as_split_spec(derive_split_constraints(g, mode = "subject"), graph = g)
+
+  expect_identical(spec$sample_data$batch_group, c("B1", "B2", "B1"))
+  expect_identical(spec$block_vars, "batch_group")
+  expect_length(spec$metadata$enrichment_warnings, 0L)
+  expect_length(spec$metadata$warnings, 0L)
+})

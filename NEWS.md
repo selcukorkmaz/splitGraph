@@ -1,3 +1,269 @@
+# splitGraph 0.4.0
+
+## Fixes made during CRAN submission
+
+- `export_graph(format = "gml")` now passes explicit node ids to igraph's GML
+  writer. Leaving igraph's `id` argument at its `NULL` default made newer
+  igraph versions hand a zero-length vector to the C layer, which rejected it
+  with "Size of id vector must match vertex count"; the failure appeared on
+  CRAN's R-devel machines while passing locally on igraph 2.2.1.
+- The README's links to `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are now
+  absolute GitHub URLs. Both files are build-ignored, so the relative links
+  dangled inside the installed package.
+
+A deliberate **breaking release** (see "Breaking changes" below); everything
+after it is intended to be additive. The theme is maturity: every step of the
+pipeline is now linear in the size of the dataset, the `split_spec` contract is
+self-contained and schema-checked, the 0.1-era API debt is gone, and what each
+downstream consumer actually accepts is documented and pinned by tests.
+
+## Performance
+
+Every step of the pipeline is now linear in the number of nodes and edges, and
+the derivation results, validation issues, and written JSON are byte-identical
+to 0.3.0 on regression cohorts.
+
+- **Composite and pairwise grouping no longer enumerate sample pairs.**
+  `derive_split_constraints(mode = "composite")`, `mode = "relatedness"`,
+  `mode = "spatial"`, and `detect_dependency_components()` compute connected
+  components on the bipartite sample-target graph. With the default `via`
+  (subject, batch, study, time) composite derivation of 500 samples took about
+  70 s and grew quadratically (about 3.5 min at 750 samples); it now takes
+  under 0.1 s at 5 000 samples and about 0.2 s at 20 000.
+- **Direct assignments, sample maps, and rule-based composites are vectorised**
+  (one `data.frame()` per table instead of one per sample).
+  `as_split_spec(constraint, graph = g)` dropped from 27 s to about 0.3 s at
+  5 000 samples.
+- **Validation builds its issue table once** instead of `rbind`-ing one-row
+  frames, checks edge signatures with a single join against the schema, and
+  replaces `stats::aggregate()` with `split()`-based counting: 7 s to under 1 s
+  at 5 000 samples.
+- **JSON writers hand jsonlite data frames** instead of nested per-row lists,
+  and `spatial_edges_from_coords()` scans the distance matrix with `which()`
+  instead of a double loop.
+- `create_nodes()` detects conflicting duplicate definitions in one pass over
+  the distinct rows rather than one table scan per duplicated identifier.
+- New `inst/bench/pipeline.R` reproduces the timings, and
+  `tests/testthat/test-performance.R` (skipped on CRAN) fails if any step
+  exceeds a generous wall-clock budget or composite derivation stops scaling
+  linearly.
+
+## New features
+
+**`split_spec` contract (schema 0.3.0)**
+
+- **Stratum annotation.** `as_split_spec(constraint, graph = g)` fills a new
+  `stratum` column with the key of the single `Outcome` node attached to each
+  sample (`sample_has_outcome`, falling back to the subject's single outcome via
+  `subject_has_outcome`) and declares it through `stratum_var`. It is an
+  annotation of the outcome level, exposed so consumers such as scikit-learn's
+  `StratifiedGroupKFold` can stratify; splitGraph still never balances folds.
+  `validate_split_spec()` checks the declared column (`invalid_stratum_var`,
+  `empty_stratum_var`, `partial_stratum`). The Python reader gains
+  `stratum_var`, a default for `strata()`, and `stratified_group_kfold()`; the
+  conformance test compares strata as well as grouping and ordering.
+- **Pairwise sources inside composite derivations.** `via` for
+  `mode = "composite"` now accepts `"relatedness"` and `"spatial"` (or their
+  relation names) alongside the direct sources. In the strict strategy their
+  thresholded edges join the same connected-component search; in the
+  rule-based strategy they contribute the component label, and a singleton
+  component counts as no assignment so the sample falls through to the next
+  mode. `metadata$via` lists node types for direct sources and mode names for
+  pairwise ones.
+- **Provenance.** `relatedness_edges_from_kinship()` and
+  `spatial_edges_from_coords()` record their threshold and metric on the edge
+  set's `source`; `build_dependency_graph()` carries every edge set's source
+  into `metadata$edge_sources` (also serialised); pairwise constraints report
+  `metadata$threshold` / `threshold_metric`; and `as_split_spec()` adds `via`,
+  `priority`, `threshold`, `threshold_metric`, and `igraph_version` to the spec
+  metadata.
+- **Schema 0.3.0, versioned.** `schema_version` moves to `"0.3.0"` (same major:
+  `0.1.0` and `0.2.0` files still load silently) and the shipped schemas now
+  live under `inst/schema/<version>/`, so a file's `$schema` URL stays valid
+  after later bumps. `migrate_split_spec_json()` fills `stratum` with `NA`.
+- **Validating readers.** `read_dependency_graph(path, validate = TRUE)` and
+  `read_split_spec(path, validate = TRUE)` check the file against the shipped
+  schema before parsing and run `validate_graph()` / `validate_split_spec()`
+  on the result, failing with a classed error. The R-side JSON validators
+  themselves now check that `attrs` is an object, that `sample_data` columns
+  have the declared types, and that vector-valued metadata fields are arrays.
+- **New leakage rule `subject_cross_site_overlap`** (warning): a subject with
+  samples collected at several sites, mirroring `subject_cross_study_overlap`;
+  `summarize_leakage_risks()` reports it as severed by subject or site
+  grouping.
+
+**Graph editing and export**
+
+- `subset_graph(g, samples)`, `combine_graphs(g1, g2, ...)`, and
+  `add_edges(g, edge_set)` derive new, validated graphs from existing ones
+  without rebuilding from node/edge sets. Subsetting has the same semantics as
+  `derive_split_constraints(samples = )`; combining regenerates edge ids and
+  rejects conflicting definitions; adding edges preserves existing ids.
+- `export_graph(g, file, format)` writes GraphML, GML, or node/edge CSV
+  tables for Cytoscape, Gephi, networkx, and `igraph::read_graph()`, with the
+  `attrs` list-column flattened to `attr_<name>` scalar columns.
+- `plot(g, focus = "sample_projection")` draws the sample graph implied by the
+  chosen `via` relations, and `plot(g, focus = "ego", node = )` draws one
+  node's neighbourhood. The plot method is now documented (`?plot.dependency_graph`).
+
+**Input and consumers**
+
+- `graph_from_metadata()` is now an S3 generic with a `SummarizedExperiment`
+  method (Bioconductor's \pkg{SummarizedExperiment} in Suggests): `colData()` is
+  used as the metadata table and the assay column names become `sample_id`
+  when no such column exists (`sample_id_col =` overrides).
+- The adapter-cookbook vignette's `rsample` adapters are now executed when
+  `rsample` is installed (it is in Suggests); the base-R adapter was already
+  executed.
+- `?as_split_spec` and the README gain a "What downstream consumers read"
+  table, verified by running against bioLeak 0.3.8. The contract test now pins
+  every row: bioLeak accepts exactly the subject / batch / study / time modes;
+  it errors on site, region, platform, assay, relatedness and spatial (absent
+  from its mode map) and also on composite (mapped to a `make_split_plan()`
+  mode whose required arguments the adapter never supplies); and the
+  documented workaround, joining `group_id` onto the observation frame and
+  calling `make_split_plan()` directly, works. A bioLeak release that fixes
+  either limitation will surface as a deliberate test failure to flip.
+- The stale comment naming fastml as a consumer was removed; fastml has no
+  splitGraph adapter.
+- `inst/python/pyproject.toml` packages the Python reader as `splitspec`
+  (stdlib-only, optional `pandas` / `sklearn` extras) for a PyPI release.
+
+**Quality infrastructure and documentation**
+
+- CI sets `NOT_CRAN=true`, installs Python, and so runs the Python
+  conformance test in both the check and coverage workflows for the first
+  time; a new Linux-only `perf-budget` workflow runs the performance tests.
+- `dev/coverage.R` runs covr locally with a 90 % threshold; `dev/release.md`
+  is the release checklist (schema bump rules, line-ending check for Windows
+  builds, reverse-dependency check against bioLeak); `.lintr` and
+  `_pkgdown.yml` (grouped reference index) are committed.
+- New vignettes: **quick-start** (metadata frame to JSON `split_spec` with a
+  mode decision table), **faq-design-notes** (why not `make_split_plan()`
+  directly, composite over-merging, thresholds and transitive closure, the
+  stratum annotation, schema versioning, conditions), and
+  **case-study-gse60424** (a real public cohort: GEO series GSE60424, cached
+  as `inst/extdata/GSE60424_samples.csv`).
+
+**Conditions**
+
+- **Classed conditions.** Every error raised by splitGraph now inherits from
+  `splitgraph_error` — including every invalid enumerated argument (`mode`,
+  `strategy`, `format`, `focus`, `layout`, `direction`, `outcome_scope`), which
+  previously produced a bare `match.arg()` error; partial matching is
+  unchanged. Each condition carries a `code` field, `NA` for plain argument
+  checks; the documented
+  subclasses are `splitgraph_schema_error`, `splitgraph_reference_error`,
+  `splitgraph_ambiguity_error`, `splitgraph_validation_error`, and
+  `splitgraph_io_error`. Package warnings carry `splitgraph_warning`. See
+  `?splitgraph_conditions`. Messages are unchanged, so code matching on text
+  keeps working.
+- `relatedness_edges_from_kinship()` accepts a square kinship / GRM **matrix**
+  with subject ids as row names (e.g. PLINK `--make-rel square` output) in
+  addition to the long pair table.
+
+## Bug fixes
+
+- **Factor / numeric `site_id`, `region_id`, `platform_id` columns.**
+  `graph_from_metadata()` failed with an `nzchar()` error when any of the three
+  identifier columns introduced in 0.3.0 was a factor, because
+  `ingest_metadata()` did not coerce them to character alongside the older
+  identifier columns. All identifier columns are now coerced, and
+  `create_nodes()` coerces its `id_col` defensively so factor identifiers work
+  on the manual constructor path too.
+- **`as_split_spec(constraint, graph = ...)` no longer aborts on ambiguous
+  annotations.** Graph enrichment fills the blocking / ordering columns
+  (`batch_group`, `study_group`, `site_group`, ..., `order_rank`) on a
+  best-effort basis. A source that cannot be resolved unambiguously (for
+  example a sample linked to two batches on a graph built with
+  `validate = FALSE`) is now left as `NA` and reported in
+  `metadata$enrichment_warnings` (also appended to `metadata$warnings`)
+  instead of raising an error unrelated to the requested constraint mode.
+- **Consistent `severed` column.** `summarize_leakage_risks()` and the
+  `leakage_risk_summary()` constructor now include the `severed` column in the
+  empty diagnostics table, matching the populated case.
+- **Vector metadata fields are always JSON arrays.** `write_split_spec()` used
+  `auto_unbox`, so a single-element `relations_used`, `warnings`, or
+  `enrichment_warnings` was written as a bare string although the shipped schema
+  declares `relations_used` an array. These fields are now written as arrays
+  regardless of length; `read_split_spec()` already coerced them back to character
+  vectors, so existing files still load.
+- **Empty JSON objects are written as `{}`, not `[]`.** An empty
+  `metadata$validation_overrides` (every graph built with default arguments),
+  an empty `edge_sources`, and the metadata of a hand-built `split_spec()` were
+  serialised as empty *arrays*, which the shipped schemas reject since they
+  declare objects. The R-side validators now distinguish the two cases — an
+  empty JSON object and an empty array both parse to a zero-length list, but
+  only the object carries names — and check `attrs`, `metadata`,
+  `validation_overrides` and `edge_sources`, so `read_*(validate = TRUE)` and
+  `validate_graph_json()` catch the malformed shape. Nothing the package can
+  write now fails its own validator, including edgeless graphs and specs with
+  no metadata.
+- **`add_edges()` accepts an edge set with no edges.** The thresholded helpers
+  return an empty `graph_edge_set` when no pair passes, which previously
+  crashed `add_edges()` with an unclassed error. The graph is now returned
+  unchanged, with the threshold still recorded in `metadata$edge_sources`.
+- **`build_dependency_graph()` rejects an unnamed `validation_overrides`
+  list.** Overrides are looked up by name, so an unnamed list silently did
+  nothing (and serialised as a JSON array).
+- **Pairwise `threshold` / `threshold_metric` round-trip.** They are written as
+  `null` for non-pairwise specs and now read back as typed `NA` rather than
+  `NULL`, so a spec's metadata survives a write/read cycle unchanged.
+- **An ambiguous sample-level outcome no longer borrows the subject's.** A
+  sample linked to several `Outcome` nodes has no unique stratum and stays
+  `NA`, instead of falling through to the `subject_has_outcome` label.
+
+## Breaking changes
+
+- **Removed the 0.1-era aliases deprecated in 0.2.0.** Migration:
+
+  | Removed | Use instead |
+  |---|---|
+  | `new_depgraph_nodes()` | `graph_node_set()` |
+  | `new_depgraph_edges()` | `graph_edge_set()` |
+  | `new_depgraph()` | `dependency_graph()` |
+  | `build_depgraph()` | `build_dependency_graph()` |
+  | `validate_depgraph()` | `validate_graph()` |
+  | `validate_graph(checks = ...)` | `validate_graph(levels = ..., severities = ...)` |
+
+  Calling a removed alias is now a "could not find function" error; passing
+  `checks=` is an "unused argument" error.
+- **Composite and pairwise constraints no longer carry `metadata$projection_edges`.**
+  The explicit sample-pair table was the quadratic part of the old derivation
+  and is not needed for grouping. `metadata$n_dependency_edges` (the number of
+  sample-target edges the components were computed from) replaces it; the pair
+  table itself is still available from
+  `detect_dependency_components()$metadata$projection_edges` and
+  `detect_shared_dependencies()` when it is wanted.
+- **Removed the unused `dependency_constraint()` constructor** and its
+  `print` / `summary` / `as.data.frame` methods. Like the `leakage_constraint()`
+  removed in 0.3.0, the class was exported but never produced or consumed
+  anywhere in the package; `split_constraint()` (produced by
+  `derive_split_constraints()`) is the supported constraint type.
+
+## Documentation
+
+- `?read_dependency_graph` no longer claims to return a *validated* graph: the
+  reader checks table / `igraph` consistency but does not re-run
+  `validate_graph()`, so a file written with `validate = FALSE` loads without
+  error. Call `validate_graph()` on files from untrusted or older sources.
+- `?graph_from_metadata` now lists `site_id`, `region_id`, and `platform_id`
+  among the auto-detected columns and states that identifier columns may be
+  character, factor, or numeric.
+- `?derive_split_constraints` documents how composite `via` combines direct
+  and pairwise sources (the restriction to direct sources noted early in this
+  cycle was lifted; see "Pairwise sources inside composite derivations" above).
+
+## Infrastructure
+
+- The Python conformance test falls back to a `python` executable when
+  `python3` is absent (the usual situation on Windows), provided it reports
+  itself as Python 3.
+- The stale `MD5` file was removed from the source tree. It is a build artefact
+  that `R CMD build --md5` (the flag CRAN applies when it builds a submission)
+  writes inside the tarball; a plain `R CMD build` does not create it, and it never
+  belongs in the source tree.
+
 # splitGraph 0.3.0
 
 This release broadens the vocabulary of leakage relations splitGraph can model,
@@ -9,7 +275,7 @@ remain the responsibility of downstream consumers such as **bioLeak**.
 
 ## New features
 
-### New leakage relations
+**New leakage relations**
 
 - **`Site` node type and `sample_collected_at_site` edge.** Multi-site /
   multi-center structure is now a first-class typed relation.
@@ -51,7 +317,7 @@ remain the responsibility of downstream consumers such as **bioLeak**.
   modes honor the `samples=` subset (components are recomputed within the subset,
   so an excluded bridge sample cannot leak structure across the split).
 
-### Interchange-format hardening
+**Interchange-format hardening**
 
 - **Formal JSON Schema.** The `dependency_graph` and `split_spec` on-disk formats
   now have formal JSON Schemas (Draft 2020-12) shipped in `inst/schema/`, and
@@ -71,7 +337,7 @@ remain the responsibility of downstream consumers such as **bioLeak**.
   (`splitgraph_version`, `derived_at`) alongside the existing `source_mode` /
   `source_strategy` / `relations_used`.
 
-### Cross-language interoperability
+**Cross-language interoperability**
 
 - **Python reference consumer.** A pure-Python reader (`inst/python/splitspec/`)
   parses the `split_spec` JSON and exposes the grouping, ordering, and stratum

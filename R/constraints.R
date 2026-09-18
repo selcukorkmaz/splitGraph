@@ -22,20 +22,46 @@
   assay = "sample_measured_by_assay"
 )
 
+# Every mode `derive_split_constraints()` accepts, in the order they appear in
+# its `mode` default. Single source of truth for the formal default, the
+# argument check, and the classed-error choices.
+.depgraph_constraint_modes <- c(
+  "subject", "batch", "study", "time", "site", "region",
+  "platform", "assay", "relatedness", "spatial", "composite"
+)
+
 .depgraph_normalize_constraint_mode <- function(mode) {
   mode <- tolower(as.character(mode)[1L])
-  .depgraph_assert(mode %in% c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "relatedness", "spatial", "composite"), paste0("Unsupported constraint mode: ", mode))
+  .depgraph_assert(
+    mode %in% .depgraph_constraint_modes,
+    paste0("Unsupported constraint mode: ", mode)
+  )
   mode
+}
+
+# Modes that may be combined inside a composite derivation: every direct
+# (single-target) mode plus the pairwise modes.
+.depgraph_composable_modes <- function() {
+  c(names(.depgraph_constraint_mode_map), names(.depgraph_pairwise_relation))
+}
+
+.depgraph_is_pairwise_mode <- function(mode) {
+  mode %in% names(.depgraph_pairwise_relation)
 }
 
 .depgraph_normalize_constraint_modes <- function(modes) {
   modes <- unique(tolower(as.character(modes)))
   .depgraph_assert(length(modes) > 0L, "At least one constraint mode is required.")
-  .depgraph_assert(all(modes %in% names(.depgraph_constraint_mode_map)), paste0(
+  .depgraph_assert(all(modes %in% .depgraph_composable_modes()), paste0(
     "Unsupported constraint mode(s): ",
-    paste(setdiff(modes, names(.depgraph_constraint_mode_map)), collapse = ", ")
+    paste(setdiff(modes, .depgraph_composable_modes()), collapse = ", ")
   ))
   modes
+}
+
+# Relation (edge type) that a composable mode contributes.
+.depgraph_mode_relation <- function(mode) {
+  if (.depgraph_is_pairwise_mode(mode)) .depgraph_pairwise_relation[[mode]] else .depgraph_constraint_edge_map[[mode]]
 }
 
 .depgraph_constraint_samples <- function(graph, samples = NULL) {
@@ -72,13 +98,14 @@
       } else {
         ""
       }
-      stop(
+      .depgraph_stop(
         paste0(
           "Multiple ", mode, " assignments found for sample(s): ",
           paste(duplicate_samples, collapse = ", "),
           hint
         ),
-        call. = FALSE
+        class = "splitgraph_ambiguity_error",
+        code = paste0("sample_multiple_", mode, "_assignments")
       )
     }
     multi_assignment_samples <- duplicate_samples
@@ -88,40 +115,20 @@
 
   edges <- edges[!duplicated(edges$from), , drop = FALSE]
 
-  target_rows <- node_data[node_data$node_id %in% edges$to, c("node_id", "node_key", "label", "attrs"), drop = FALSE]
-  target_map <- stats::setNames(split(target_rows, target_rows$node_id), names(split(target_rows, target_rows$node_id)))
+  # Vectorised lookup: one edge per sample at most, then one node row per edge.
+  edge_idx <- match(sample_nodes$node_id, edges$from)
+  target_idx <- match(edges$to[edge_idx], node_data$node_id)
 
-  rows <- lapply(seq_len(nrow(sample_nodes)), function(i) {
-    sample_row <- sample_nodes[i, , drop = FALSE]
-    edge_row <- edges[edges$from == sample_row$node_id, , drop = FALSE]
-
-    if (nrow(edge_row) == 0L) {
-      return(data.frame(
-        sample_id = sample_row$node_key,
-        sample_node_id = sample_row$node_id,
-        linked_node_id = NA_character_,
-        linked_node_type = target_type,
-        linked_key = NA_character_,
-        linked_label = NA_character_,
-        edge_type = edge_type,
-        stringsAsFactors = FALSE
-      ))
-    }
-
-    target_row <- target_map[[edge_row$to[[1L]]]]
-    data.frame(
-      sample_id = sample_row$node_key,
-      sample_node_id = sample_row$node_id,
-      linked_node_id = target_row$node_id[[1L]],
-      linked_node_type = target_type,
-      linked_key = target_row$node_key[[1L]],
-      linked_label = target_row$label[[1L]],
-      edge_type = edge_row$edge_type[[1L]],
-      stringsAsFactors = FALSE
-    )
-  })
-
-  out <- do.call(rbind, rows)
+  out <- data.frame(
+    sample_id = sample_nodes$node_key,
+    sample_node_id = sample_nodes$node_id,
+    linked_node_id = node_data$node_id[target_idx],
+    linked_node_type = target_type,
+    linked_key = node_data$node_key[target_idx],
+    linked_label = node_data$label[target_idx],
+    edge_type = edge_type,
+    stringsAsFactors = FALSE
+  )
   row.names(out) <- NULL
   attr(out, "multi_assignment_samples") <- multi_assignment_samples
   out
@@ -141,40 +148,28 @@
 
 .depgraph_build_sample_map <- function(assignments, mode, explanation_prefix = NULL) {
   mode <- .depgraph_normalize_constraint_mode(mode)
+  prefix <- explanation_prefix %||% paste0("Grouped by ", mode)
 
-  rows <- lapply(seq_len(nrow(assignments)), function(i) {
-    row <- assignments[i, , drop = FALSE]
-    linked <- !is.na(row$linked_node_id[[1L]]) && nzchar(row$linked_node_id[[1L]])
-    group_id <- if (linked) {
-      paste0(mode, ":", row$linked_key[[1L]])
-    } else {
-      paste0(mode, ":unlinked:", row$sample_id[[1L]])
-    }
-    group_label <- if (linked) row$linked_key[[1L]] else paste0("unlinked_", row$sample_id[[1L]])
-    explanation <- if (linked) {
-      paste0(
-        explanation_prefix %||% paste0("Grouped by ", mode),
-        " through ", row$edge_type[[1L]],
-        " -> ", row$linked_key[[1L]], "."
-      )
-    } else {
-      paste0(
-        "No ", mode, " assignment was available; sample retained as an unlinked singleton group."
-      )
-    }
+  linked <- !is.na(assignments$linked_node_id) & nzchar(assignments$linked_node_id)
+  linked[is.na(linked)] <- FALSE
 
-    data.frame(
-      sample_id = row$sample_id,
-      sample_node_id = row$sample_node_id,
-      group_id = group_id,
-      constraint_type = mode,
-      group_label = group_label,
-      explanation = explanation,
-      stringsAsFactors = FALSE
-    )
-  })
-
-  out <- do.call(rbind, rows)
+  out <- data.frame(
+    sample_id = assignments$sample_id,
+    sample_node_id = assignments$sample_node_id,
+    group_id = ifelse(
+      linked,
+      paste0(mode, ":", assignments$linked_key),
+      paste0(mode, ":unlinked:", assignments$sample_id)
+    ),
+    constraint_type = mode,
+    group_label = ifelse(linked, assignments$linked_key, paste0("unlinked_", assignments$sample_id)),
+    explanation = ifelse(
+      linked,
+      paste0(prefix, " through ", assignments$edge_type, " -> ", assignments$linked_key, "."),
+      paste0("No ", mode, " assignment was available; sample retained as an unlinked singleton group.")
+    ),
+    stringsAsFactors = FALSE
+  )
   row.names(out) <- NULL
   out
 }
@@ -209,9 +204,10 @@
 
   time_consistency <- .depgraph_time_order_consistency(graph$nodes$data, graph$edges$data)
   if (length(time_consistency$self_loop_edge_ids) > 0L || length(time_consistency$cycle_edge_ids) > 0L) {
-    stop(
+    .depgraph_stop(
       "Time ordering metadata are inconsistent: `timepoint_precedes` must define an acyclic ordering.",
-      call. = FALSE
+      class = "splitgraph_validation_error",
+      code = "timepoint_precedence_cycle"
     )
   }
   if (nrow(time_consistency$conflicting_pairs) > 0L) {
@@ -220,12 +216,13 @@
       " -> ",
       time_consistency$conflicting_pairs$to
     )
-    stop(
+    .depgraph_stop(
       paste0(
         "Time ordering metadata conflict between `time_index` and `timepoint_precedes`: ",
         paste(pair_labels, collapse = ", ")
       ),
-      call. = FALSE
+      class = "splitgraph_validation_error",
+      code = "time_order_conflict"
     )
   }
 
@@ -521,10 +518,16 @@
   via <- as.character(via)
   via_modes <- vapply(via, function(x) {
     x_lower <- tolower(x)
-    if (x_lower %in% names(.depgraph_constraint_mode_map)) {
+    # A mode name: direct ("subject", ...) or pairwise ("relatedness", "spatial").
+    if (x_lower %in% .depgraph_composable_modes()) {
       return(x_lower)
     }
-
+    # A pairwise relation name is accepted as an alias for its mode.
+    rel_idx <- match(x_lower, tolower(.depgraph_pairwise_relation))
+    if (!is.na(rel_idx)) {
+      return(names(.depgraph_pairwise_relation)[[rel_idx]])
+    }
+    # A node type ("Subject", ...) maps to its direct mode.
     match_idx <- match(x_lower, tolower(.depgraph_constraint_mode_map))
     .depgraph_assert(!is.na(match_idx), paste0("Unsupported composite dependency source: ", x))
     names(.depgraph_constraint_mode_map)[[match_idx]]
@@ -533,68 +536,43 @@
   unique(via_modes)
 }
 
+# Human-readable labels for `metadata$via`: node types for direct modes,
+# mode names for pairwise modes (which have no target node type).
+.depgraph_via_labels <- function(via_modes) {
+  vapply(via_modes, function(mode) {
+    if (.depgraph_is_pairwise_mode(mode)) mode else unname(.depgraph_constraint_mode_map[[mode]])
+  }, character(1), USE.NAMES = FALSE)
+}
+
 .derive_composite_strict_constraints <- function(graph, samples = NULL, via = NULL) {
   via_modes <- .depgraph_normalize_via_modes(via)
-  via_types <- unname(.depgraph_constraint_mode_map[via_modes])
-  components <- detect_dependency_components(graph, via = via_types, min_size = 1)
-  table <- components$table
+  direct_modes <- via_modes[!.depgraph_is_pairwise_mode(via_modes)]
+  pairwise_modes <- via_modes[.depgraph_is_pairwise_mode(via_modes)]
+  via_types <- .depgraph_via_labels(via_modes)
+  edge_types <- vapply(via_modes, .depgraph_mode_relation, character(1), USE.NAMES = FALSE)
 
-  if (!is.null(samples)) {
-    sample_nodes <- .depgraph_constraint_samples(graph, samples)
-    keep_ids <- sample_nodes$node_id
-
-    # Recompute components within the requested subset only. Without this,
-    # two in-subset samples connected only through an out-of-subset sample
-    # would inherit a shared component_id from the full-graph projection,
-    # silently leaking out-of-subset structure into the produced split.
-    projection <- components$metadata$projection_edges
-    if (is.null(projection) || nrow(projection) == 0L) {
-      projection <- data.frame(
-        sample_node_id_1 = character(0),
-        sample_node_id_2 = character(0),
-        stringsAsFactors = FALSE
-      )
-    } else {
-      projection <- projection[
-        projection$sample_node_id_1 %in% keep_ids &
-          projection$sample_node_id_2 %in% keep_ids,
-        , drop = FALSE
-      ]
-    }
-
-    subset_graph <- if (nrow(projection) == 0L) {
-      igraph::make_empty_graph(n = length(keep_ids), directed = FALSE)
-    } else {
-      igraph::graph_from_data_frame(
-        d = data.frame(
-          from = projection$sample_node_id_1,
-          to = projection$sample_node_id_2,
-          stringsAsFactors = FALSE
-        ),
-        vertices = data.frame(name = keep_ids, stringsAsFactors = FALSE),
-        directed = FALSE
-      )
-    }
-    igraph::V(subset_graph)$name <- keep_ids
-
-    sub_components <- igraph::components(subset_graph)
-    membership_idx <- as.integer(sub_components$membership[keep_ids])
-    table <- data.frame(
-      sample_id = sample_nodes$node_key,
-      sample_node_id = keep_ids,
-      component_id = paste0("component_", membership_idx),
-      component_size = as.integer(sub_components$csize[membership_idx]),
-      stringsAsFactors = FALSE
-    )
-    components$metadata$projection_edges <- projection
+  # Components are computed on the bipartite sample-target graph restricted to
+  # the requested samples. Restricting the *edges* to in-subset samples is what
+  # keeps two in-subset samples apart when their only link runs through an
+  # out-of-subset sample: that sample's edges are simply absent, so the two
+  # targets it would have bridged stay disconnected. Pairwise relations add
+  # their own connecting edges (sample-sample for spatial, sample-subject plus
+  # subject-subject for relatedness) to the same component search.
+  sample_nodes <- .depgraph_constraint_samples(graph, samples)
+  keep_ids <- sample_nodes$node_id
+  dep_edges <- .depgraph_dependency_edges(graph, keep_ids, unname(.depgraph_constraint_edge_map[direct_modes]))[, c("from", "to"), drop = FALSE]
+  for (mode in pairwise_modes) {
+    dep_edges <- rbind(dep_edges, .depgraph_pairwise_component_edges(graph, mode, keep_ids))
   }
+  comps <- .depgraph_sample_components(keep_ids, dep_edges)
 
+  component_id <- paste0("component_", comps$membership)
   sample_map <- data.frame(
-    sample_id = table$sample_id,
-    sample_node_id = table$sample_node_id,
-    group_id = table$component_id,
+    sample_id = sample_nodes$node_key,
+    sample_node_id = keep_ids,
+    group_id = component_id,
     constraint_type = "composite_strict",
-    group_label = table$component_id,
+    group_label = component_id,
     explanation = paste0(
       "Strict composite grouping via transitive closure over: ",
       paste(via_types, collapse = ", "),
@@ -602,13 +580,11 @@
     ),
     stringsAsFactors = FALSE
   )
+  row.names(sample_map) <- NULL
 
   warnings <- character()
-  if (nrow(sample_map) > 0L) {
-    singleton_fraction <- mean(table$component_size == 1L)
-    if (singleton_fraction > 0.5) {
-      warnings <- c(warnings, "Most strict composite groups are singletons; dependency coverage may be sparse.")
-    }
+  if (nrow(sample_map) > 0L && mean(comps$size == 1L) > 0.5) {
+    warnings <- c(warnings, "Most strict composite groups are singletons; dependency coverage may be sparse.")
   }
 
   split_constraint(
@@ -623,12 +599,12 @@
     metadata = list(
       mode = "composite",
       strategy = "strict",
-      relations_used = unname(.depgraph_constraint_edge_map[via_modes]),
+      relations_used = edge_types,
       via = via_types,
       n_groups = length(unique(sample_map$group_id)),
       n_samples = nrow(sample_map),
-      warnings = warnings,
-      projection_edges = components$metadata$projection_edges
+      n_dependency_edges = nrow(dep_edges),
+      warnings = warnings
     )
   )
 }
@@ -639,65 +615,78 @@
   .depgraph_assert(all(priority %in% via_modes), "`priority` must be a subset of the selected composite dependency sources.")
 
   sample_nodes <- .depgraph_constraint_samples(graph, samples)
-  assignments <- lapply(priority, function(mode) .depgraph_direct_assignment(graph, mode, samples = sample_nodes$node_id))
-  names(assignments) <- priority
-  time_info <- if ("time" %in% priority) .derive_time_constraints(graph, samples = sample_nodes$node_id)$sample_map else NULL
+  sample_ids <- sample_nodes$node_id
+  n <- length(sample_ids)
 
-  rows <- lapply(seq_len(nrow(sample_nodes)), function(i) {
-    sample_row <- sample_nodes[i, , drop = FALSE]
-    sample_id <- sample_row$node_key[[1L]]
-    sample_node_id <- sample_row$node_id[[1L]]
-
-    available <- lapply(assignments, function(x) x[x$sample_node_id == sample_node_id, , drop = FALSE])
-    available_modes <- names(available)[vapply(available, function(x) nrow(x) == 1L && !is.na(x$linked_node_id[[1L]]), logical(1))]
-
-    if (length(available_modes) == 0L) {
-      return(data.frame(
-        sample_id = sample_id,
-        sample_node_id = sample_node_id,
-        group_id = paste0("composite:unlinked:", sample_id),
-        constraint_type = "unlinked",
-        group_label = paste0("unlinked_", sample_id),
-        explanation = "No prioritized dependency assignment was available; sample retained as a singleton group.",
-        time_index = NA_real_,
-        timepoint_id = NA_character_,
-        order_rank = NA_integer_,
-        stringsAsFactors = FALSE
-      ))
+  # One aligned key vector per prioritized mode (NA where the sample has no
+  # assignment). Direct modes use the single linked target; pairwise modes use
+  # the connected-component label, and a singleton component counts as "no
+  # assignment" so the sample falls through to the next mode in priority.
+  keys <- lapply(priority, function(mode) {
+    if (.depgraph_is_pairwise_mode(mode)) {
+      pairwise <- .derive_pairwise_constraints(graph, mode, samples = sample_ids)$sample_map
+      idx <- match(sample_ids, pairwise$sample_node_id)
+      group_size <- table(pairwise$group_id)[pairwise$group_id[idx]]
+      key <- pairwise$group_label[idx]
+      key[is.na(group_size) | group_size <= 1L] <- NA_character_
+      return(key)
     }
-
-    chosen_mode <- available_modes[[1L]]
-    chosen_row <- available[[chosen_mode]]
-    additional <- setdiff(available_modes, chosen_mode)
-    explanation <- paste0(
-      "Composite rule-based grouping selected ", chosen_mode,
-      " based on priority order ", paste(priority, collapse = " > "),
-      " -> ", chosen_row$linked_key[[1L]], "."
-    )
-    if (length(additional) > 0L) {
-      detail <- vapply(additional, function(mode) {
-        paste0(mode, "=", available[[mode]]$linked_key[[1L]])
-      }, character(1), USE.NAMES = FALSE)
-      explanation <- paste0(explanation, " Additional available dependencies: ", paste(detail, collapse = ", "), ".")
-    }
-
-    time_row <- if (!is.null(time_info)) time_info[time_info$sample_node_id == sample_node_id, , drop = FALSE] else NULL
-
-    data.frame(
-      sample_id = sample_id,
-      sample_node_id = sample_node_id,
-      group_id = paste0("composite_", chosen_mode, ":", chosen_row$linked_key[[1L]]),
-      constraint_type = chosen_mode,
-      group_label = chosen_row$linked_key[[1L]],
-      explanation = explanation,
-      time_index = if (!is.null(time_row) && nrow(time_row) == 1L) time_row$time_index[[1L]] else NA_real_,
-      timepoint_id = if (!is.null(time_row) && nrow(time_row) == 1L) time_row$timepoint_id[[1L]] else NA_character_,
-      order_rank = if (!is.null(time_row) && nrow(time_row) == 1L) time_row$order_rank[[1L]] else NA_integer_,
-      stringsAsFactors = FALSE
-    )
+    assignment <- .depgraph_direct_assignment(graph, mode, samples = sample_ids)
+    assignment$linked_key[match(sample_ids, assignment$sample_node_id)]
   })
+  names(keys) <- priority
+  key_matrix <- matrix(unlist(keys, use.names = FALSE), nrow = n, ncol = length(priority))
+  available <- !is.na(key_matrix)
 
-  sample_map <- do.call(rbind, rows)
+  # Highest-priority available mode per sample (column index of first TRUE).
+  first_idx <- apply(available, 1L, function(row) {
+    hit <- which(row)
+    if (length(hit) == 0L) NA_integer_ else hit[[1L]]
+  })
+  if (n == 0L) first_idx <- integer()
+  has_mode <- !is.na(first_idx)
+  chosen_mode <- ifelse(has_mode, priority[first_idx], NA_character_)
+  chosen_key <- ifelse(has_mode, key_matrix[cbind(seq_len(n), ifelse(has_mode, first_idx, 1L))], NA_character_)
+
+  # "Additional available dependencies" detail: every other available mode.
+  additional <- vapply(seq_len(n), function(i) {
+    if (!has_mode[[i]]) return("")
+    others <- which(available[i, ] & seq_along(priority) != first_idx[[i]])
+    if (length(others) == 0L) return("")
+    paste0(
+      " Additional available dependencies: ",
+      paste(paste0(priority[others], "=", key_matrix[i, others]), collapse = ", "),
+      "."
+    )
+  }, character(1))
+
+  time_info <- if ("time" %in% priority) .derive_time_constraints(graph, samples = sample_ids)$sample_map else NULL
+  time_idx <- if (is.null(time_info)) rep(NA_integer_, n) else match(sample_ids, time_info$sample_node_id)
+
+  sample_map <- data.frame(
+    sample_id = sample_nodes$node_key,
+    sample_node_id = sample_ids,
+    group_id = ifelse(
+      has_mode,
+      paste0("composite_", chosen_mode, ":", chosen_key),
+      paste0("composite:unlinked:", sample_nodes$node_key)
+    ),
+    constraint_type = ifelse(has_mode, chosen_mode, "unlinked"),
+    group_label = ifelse(has_mode, chosen_key, paste0("unlinked_", sample_nodes$node_key)),
+    explanation = ifelse(
+      has_mode,
+      paste0(
+        "Composite rule-based grouping selected ", chosen_mode,
+        " based on priority order ", paste(priority, collapse = " > "),
+        " -> ", chosen_key, ".", additional
+      ),
+      "No prioritized dependency assignment was available; sample retained as a singleton group."
+    ),
+    time_index = if (is.null(time_info)) rep(NA_real_, n) else as.numeric(time_info$time_index[time_idx]),
+    timepoint_id = if (is.null(time_info)) rep(NA_character_, n) else as.character(time_info$timepoint_id[time_idx]),
+    order_rank = if (is.null(time_info)) rep(NA_integer_, n) else as.integer(time_info$order_rank[time_idx]),
+    stringsAsFactors = FALSE
+  )
   row.names(sample_map) <- NULL
   warnings <- character()
   if (any(sample_map$constraint_type == "unlinked")) {
@@ -719,7 +708,8 @@
     metadata = list(
       mode = "composite",
       strategy = "rule_based",
-      relations_used = unname(.depgraph_constraint_edge_map[priority]),
+      relations_used = vapply(priority, .depgraph_mode_relation, character(1), USE.NAMES = FALSE),
+      via = .depgraph_via_labels(via_modes),
       priority = priority,
       n_groups = length(unique(sample_map$group_id)),
       n_samples = nrow(sample_map),
@@ -817,7 +807,15 @@
 #'   modes.
 #' @param via Optional dependency sources used for composite grouping. May be
 #'   given as lower-case modes such as \code{"subject"} or node types such as
-#'   \code{"Subject"}.
+#'   \code{"Subject"}. Any direct-assignment source (\code{"subject"},
+#'   \code{"batch"}, \code{"study"}, \code{"time"}, \code{"site"},
+#'   \code{"region"}, \code{"platform"}, \code{"assay"}) and either pairwise
+#'   source (\code{"relatedness"}, \code{"spatial"}) can be combined. In the
+#'   strict strategy a pairwise source contributes its thresholded edges to the
+#'   same connected-component search as the direct relations; in the
+#'   rule-based strategy it contributes the component label, and a singleton
+#'   component counts as "no assignment" so the sample falls through to the
+#'   next mode. Defaults to \code{c("subject", "batch", "study", "time")}.
 #' @param priority Optional priority order used for
 #'   \code{strategy = "rule_based"}.
 #' @param include_warnings Whether to retain human-readable warnings in the
@@ -838,10 +836,19 @@
 #' constraint <- derive_split_constraints(g, mode = "subject")
 #' grouping_vector(constraint)
 #' @export
-derive_split_constraints <- function(graph, mode = c("subject", "batch", "study", "time", "site", "region", "platform", "assay", "relatedness", "spatial", "composite"), samples = NULL, strategy = c("strict", "rule_based"), via = NULL, priority = NULL, include_warnings = TRUE) {
+derive_split_constraints <- function(graph,
+                                     mode = c("subject", "batch", "study", "time", "site", "region",
+                                              "platform", "assay", "relatedness", "spatial", "composite"),
+                                     samples = NULL,
+                                     strategy = c("strict", "rule_based"),
+                                     via = NULL,
+                                     priority = NULL,
+                                     include_warnings = TRUE) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
-  mode <- .depgraph_normalize_constraint_mode(match.arg(mode))
-  strategy <- match.arg(strategy)
+  mode <- .depgraph_normalize_constraint_mode(
+    .depgraph_match_arg(mode, .depgraph_constraint_modes, "mode")
+  )
+  strategy <- .depgraph_match_arg(strategy, c("strict", "rule_based"), "strategy")
 
   result <- switch(
     mode,

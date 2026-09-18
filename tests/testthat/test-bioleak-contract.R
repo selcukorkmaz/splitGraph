@@ -70,3 +70,100 @@ test_that("newer additive columns do not break the bioLeak seam", {
   ls <- bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 3)
   expect_s4_class(ls, "LeakSplits")
 })
+
+richer_contract_graph <- function() {
+  meta <- data.frame(
+    sample_id   = paste0("S", 1:12),
+    subject_id  = rep(paste0("P", 1:6), each = 2),
+    study_id    = rep(c("ST1", "ST2"), each = 6),
+    batch_id    = rep(c("B1", "B2", "B3"), times = 4),
+    site_id     = rep(c("NYC", "BOS", "SFO"), times = 4),
+    region_id   = rep(c("cortex", "liver"), times = 6),
+    platform_id = rep(c("HiSeq", "NovaSeq"), each = 6),
+    assay_id    = rep(c("rna", "atac", "rna"), times = 4),
+    timepoint_id = rep(c("T1", "T2"), 6),
+    time_index  = rep(c(1, 2), 6),
+    stringsAsFactors = FALSE
+  )
+  pairs <- data.frame(id1 = c("P1", "P3"), id2 = c("P2", "P4"), kinship = c(0.25, 0.5), stringsAsFactors = FALSE)
+  coords <- data.frame(
+    sample_id = meta$sample_id,
+    x = c(0, 0.1, 5, 5.1, 10, 10.1, 15, 15.1, 20, 20.1, 25, 25.1), y = 0
+  )
+  g <- graph_from_metadata(meta)
+  add_edges(g, list(
+    relatedness_edges_from_kinship(pairs, threshold = 0.1),
+    spatial_edges_from_coords(coords, radius = 0.5)
+  ))
+}
+
+test_that("bioLeak 0.3.x accepts exactly the subject / batch / study / time modes", {
+  skip_if_no_bioleak()
+  g <- richer_contract_graph()
+  for (mode in c("subject", "batch", "study", "time")) {
+    spec <- as_split_spec(derive_split_constraints(g, mode = mode), graph = g)
+    expect_identical(spec$constraint_mode, mode)
+    expect_s4_class(
+      bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
+      "LeakSplits"
+    )
+  }
+})
+
+test_that("bioLeak 0.3.x rejects the six 0.3.0-era modes AND composite (pinned)", {
+  skip_if_no_bioleak()
+  # Two distinct limitations in bioLeak <= 0.3.8's `as_leaksplits()`:
+  #
+  #  * its `mode_map` names only subject/batch/study/time/composite, and
+  #    `mode_map[[src_mode]]` on a named atomic vector errors ("subscript out
+  #    of bounds") for anything else, so the intended `subject_grouped`
+  #    fallback on the next line is unreachable;
+  #  * `composite` IS named, mapping to `make_split_plan(mode = "combined")`,
+  #    but the adapter never supplies the `constraints` / `primary_axis` that
+  #    mode requires, so it errors too.
+  #
+  # Both are pinned here so the seam is explicit. When a bioLeak release fixes
+  # either, this test fails on purpose: flip the affected rows to assert that
+  # grouping and blocking are honoured (Workstream D2 of ROADMAP-0.4.0.md).
+  g <- richer_contract_graph()
+
+  for (mode in c("site", "region", "platform", "assay", "relatedness", "spatial")) {
+    spec <- as_split_spec(derive_split_constraints(g, mode = mode), graph = g)
+    expect_identical(spec$constraint_mode, mode)
+    expect_error(
+      bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
+      info = paste("bioLeak accepted mode", mode, "- flip this test (Workstream D2)")
+    )
+  }
+
+  for (strategy in c("strict", "rule_based")) {
+    spec <- as_split_spec(
+      derive_split_constraints(g, mode = "composite", strategy = strategy, via = c("subject", "site")),
+      graph = g
+    )
+    expect_identical(spec$constraint_mode, "composite")
+    expect_error(
+      bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
+      info = paste("bioLeak accepted composite", strategy, "- flip this test (Workstream D2)")
+    )
+  }
+})
+
+test_that("the documented workaround works: hand group_id to make_split_plan()", {
+  skip_if_no_bioleak()
+  # Until bioLeak maps the newer modes, a splitGraph grouping still reaches it:
+  # join `group_id` onto the observation frame and call make_split_plan()
+  # directly. This is the path the README and ?as_split_spec point users at, so
+  # it must keep working.
+  g <- richer_contract_graph()
+  spec <- as_split_spec(derive_split_constraints(g, mode = "site"), graph = g)
+  joined <- merge(
+    contract_data(),
+    spec$sample_data[, c("sample_id", spec$group_var)],
+    by = "sample_id", sort = FALSE
+  )
+  plan <- bioLeak::make_split_plan(
+    joined, outcome = "y", mode = "subject_grouped", group = spec$group_var, v = 2
+  )
+  expect_s4_class(plan, "LeakSplits")
+})

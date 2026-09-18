@@ -14,8 +14,6 @@
 #'   auxiliary metadata.
 #' @param query Query label stored on a \code{graph_query_result}.
 #' @param table Tabular query result payload.
-#' @param constraint_id,relation_types,transitive Fields describing a
-#'   dependency constraint.
 #' @param sample_map Sample-level mapping table for constraints.
 #' @param strategy Split strategy identifier.
 #' @return An S3 object corresponding to the constructor that was called.
@@ -108,39 +106,6 @@ dependency_graph <- function(nodes, edges, graph, metadata = list(), caches = li
 
 #' @rdname graph_node_set
 #' @export
-new_depgraph_nodes <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
-  .Deprecated(
-    new = "graph_node_set",
-    package = "splitGraph",
-    msg = "`new_depgraph_nodes()` is deprecated. Use `graph_node_set()` instead."
-  )
-  graph_node_set(data = data, schema_version = schema_version, source = source)
-}
-
-#' @rdname graph_node_set
-#' @export
-new_depgraph_edges <- function(data = NULL, schema_version = .depgraph_schema_version, source = list()) {
-  .Deprecated(
-    new = "graph_edge_set",
-    package = "splitGraph",
-    msg = "`new_depgraph_edges()` is deprecated. Use `graph_edge_set()` instead."
-  )
-  graph_edge_set(data = data, schema_version = schema_version, source = source)
-}
-
-#' @rdname graph_node_set
-#' @export
-new_depgraph <- function(nodes, edges, graph = NULL, metadata = list(), caches = list()) {
-  .Deprecated(
-    new = "dependency_graph",
-    package = "splitGraph",
-    msg = "`new_depgraph()` is deprecated. Use `dependency_graph()` instead."
-  )
-  dependency_graph(nodes = nodes, edges = edges, graph = graph, metadata = metadata, caches = caches)
-}
-
-#' @rdname graph_node_set
-#' @export
 graph_query_result <- function(query = "", params = list(), nodes = NULL, edges = NULL, table = NULL, metadata = list()) {
   structure(
     list(
@@ -152,22 +117,6 @@ graph_query_result <- function(query = "", params = list(), nodes = NULL, edges 
       metadata = metadata
     ),
     class = "graph_query_result"
-  )
-}
-
-#' @rdname graph_node_set
-#' @export
-dependency_constraint <- function(constraint_id, relation_types, sample_map, transitive = TRUE, metadata = list()) {
-  .depgraph_assert(is.data.frame(sample_map), "`sample_map` must be a data.frame.")
-  structure(
-    list(
-      constraint_id = as.character(constraint_id)[1L],
-      relation_types = as.character(relation_types),
-      sample_map = sample_map,
-      transitive = isTRUE(transitive),
-      metadata = metadata
-    ),
-    class = "dependency_constraint"
   )
 }
 
@@ -221,6 +170,9 @@ split_constraint <- function(strategy, sample_map, recommended_downstream_args =
 #' @param group_var Name of the grouping column.
 #' @param block_vars Optional blocking variable names.
 #' @param time_var Optional ordering column name.
+#' @param stratum_var Optional name of the column carrying the stratum
+#'   annotation (the outcome level each sample carries). An annotation only:
+#'   splitGraph never balances folds.
 #' @param ordering_required Whether ordering is required for downstream
 #'   evaluation.
 #' @param constraint_mode,constraint_strategy Constraint-derivation metadata.
@@ -242,7 +194,9 @@ split_constraint <- function(strategy, sample_map, recommended_downstream_args =
 #' report$valid
 #' summary(report)
 #' @export
-depgraph_validation_report <- function(graph_name = NULL, issues = NULL, metrics = list(), metadata = list(), valid = NULL, errors = NULL, warnings = NULL, advisories = NULL) {
+depgraph_validation_report <- function(graph_name = NULL, issues = NULL, metrics = list(),
+                                       metadata = list(), valid = NULL, errors = NULL,
+                                       warnings = NULL, advisories = NULL) {
   if (is.null(issues)) {
     issues <- data.frame(
       issue_id = character(),
@@ -303,20 +257,12 @@ depgraph_validation_report <- function(graph_name = NULL, issues = NULL, metrics
 
 #' @rdname depgraph_validation_report
 #' @export
-split_spec <- function(sample_data = NULL, group_var = "group_id", block_vars = character(), time_var = NULL, ordering_required = FALSE, constraint_mode = NULL, constraint_strategy = NULL, recommended_resampling = NULL, metadata = list()) {
+split_spec <- function(sample_data = NULL, group_var = "group_id", block_vars = character(),
+                       time_var = NULL, stratum_var = NULL, ordering_required = FALSE,
+                       constraint_mode = NULL, constraint_strategy = NULL,
+                       recommended_resampling = NULL, metadata = list()) {
   if (is.null(sample_data)) {
-    sample_data <- data.frame(
-      sample_id = character(),
-      sample_node_id = character(),
-      group_id = character(),
-      primary_group = character(),
-      batch_group = character(),
-      study_group = character(),
-      timepoint_id = character(),
-      time_index = numeric(),
-      order_rank = integer(),
-      stringsAsFactors = FALSE
-    )
+    sample_data <- .split_spec_sample_data_template(0L)
   }
 
   .depgraph_assert(is.data.frame(sample_data), "`sample_data` must be a data.frame.")
@@ -327,6 +273,7 @@ split_spec <- function(sample_data = NULL, group_var = "group_id", block_vars = 
       group_var = as.character(group_var)[1L],
       block_vars = as.character(block_vars),
       time_var = if (is.null(time_var)) NULL else as.character(time_var)[1L],
+      stratum_var = if (is.null(stratum_var)) NULL else as.character(stratum_var)[1L],
       ordering_required = isTRUE(ordering_required),
       constraint_mode = if (is.null(constraint_mode)) NULL else as.character(constraint_mode)[1L],
       constraint_strategy = if (is.null(constraint_strategy)) NULL else as.character(constraint_strategy)[1L],
@@ -371,7 +318,9 @@ split_spec_validation <- function(issues = NULL, metadata = list()) {
 
 #' @rdname depgraph_validation_report
 #' @export
-leakage_risk_summary <- function(overview = character(), diagnostics = NULL, validation_summary = list(), constraint_summary = list(), split_spec_summary = list(), metadata = list()) {
+leakage_risk_summary <- function(overview = character(), diagnostics = NULL,
+                                 validation_summary = list(), constraint_summary = list(),
+                                 split_spec_summary = list(), metadata = list()) {
   if (is.null(diagnostics)) {
     diagnostics <- data.frame(
       severity = character(),
@@ -379,6 +328,7 @@ leakage_risk_summary <- function(overview = character(), diagnostics = NULL, val
       message = character(),
       source = character(),
       n_affected = integer(),
+      severed = logical(),
       stringsAsFactors = FALSE
     )
   }

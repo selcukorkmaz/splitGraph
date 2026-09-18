@@ -42,15 +42,36 @@ leakage risks.
 \details{
 The translation layer always produces canonical sample-level columns
 including \code{sample_id}, \code{sample_node_id}, \code{group_id}, and
-\code{primary_group}. When available, it also carries \code{batch_group},
-\code{study_group}, \code{timepoint_id}, \code{time_index}, and
-\code{order_rank}. Missing but relevant fields are retained as \code{NA}
-columns rather than omitted.
+\code{primary_group}. When available, it also carries the blocking columns
+(\code{batch_group}, \code{study_group}, \code{site_group},
+\code{region_group}, \code{platform_group}, \code{assay_group}), the
+\code{stratum} annotation, and the ordering columns (\code{timepoint_id},
+\code{time_index}, \code{order_rank}). Missing but relevant fields are
+retained as \code{NA} columns rather than omitted.
+
+\code{stratum} is filled from the graph when one is supplied: the key of the
+single \code{Outcome} node attached to a sample via
+\code{sample_has_outcome}, or, failing that, the single outcome attached to
+the sample's subject via \code{subject_has_outcome}. It is an
+\emph{annotation} of the outcome level each sample carries, exposed through
+\code{stratum_var} so a downstream consumer (for example scikit-learn's
+\code{StratifiedGroupKFold}) can stratify; splitGraph itself never balances
+folds. When no sample has a unique outcome, \code{stratum_var} is
+\code{NULL}.
 
 When only a subset of samples has ordering metadata, the translated split
 spec still exposes that partial ordering through \code{time_var}, but
 \code{ordering_required} remains \code{FALSE}. Ordering is only marked as
 required when the constraint implies complete ordering coverage.
+
+When \code{graph} is supplied, the blocking and ordering annotation columns
+are filled from the graph wherever the constraint left them \code{NA}. This
+enrichment is best-effort: a source that cannot be resolved unambiguously
+(for example a sample linked to two batches on a graph built with
+\code{validate = FALSE}) is left as \code{NA} and the reason is recorded in
+\code{metadata$enrichment_warnings} (and appended to
+\code{metadata$warnings}) instead of aborting the translation. The primary
+\code{group_id} always comes from the constraint and is never affected.
 
 The split-spec validator checks:
 \itemize{
@@ -75,6 +96,38 @@ dependency on any of them.
 \code{split_constraint} metadata rather than duplicating downstream
 evaluation logic.
 }
+\section{What downstream consumers read}{
+
+The \code{split_spec} contract is wider than any single consumer uses today.
+Verified against the released versions on 2026-09-14:
+
+\tabular{lll}{
+  \strong{Consumer} \tab \strong{Reads} \tab \strong{Modes} \cr
+  bioLeak 0.3.8 \code{as_leaksplits()} \tab
+    \code{sample_data} columns \code{sample_id}, the \code{group_var} column,
+    \code{batch_group}, \code{study_group}, \code{timepoint_id},
+    \code{order_rank}; fields \code{group_var}, \code{constraint_mode},
+    \code{time_var} \tab
+    subject, batch, study, time. Every other \code{constraint_mode}
+    currently \emph{errors} inside bioLeak: site, region, platform, assay,
+    relatedness and spatial are absent from its mode map ("subscript out of
+    bounds"), and composite maps to \code{make_split_plan(mode =
+    "combined")} without the \code{constraints} / \code{primary_axis} that
+    mode requires. Until that is fixed, join \code{group_id} onto your
+    observation frame and call \code{bioLeak::make_split_plan(group =
+    "group_id")} directly; the grouping is preserved. \cr
+  Python \code{splitspec} reader (shipped) \tab
+    every field and column, including \code{stratum_var} / \code{stratum}
+    and the block columns \tab all \cr
+  rsample (adapter-cookbook vignette) \tab
+    \code{group_id} for \code{group_vfold_cv()}, \code{order_rank} for
+    \code{rolling_origin()}; block columns read for fold auditing \tab all \cr
+}
+Every row is pinned by a contract test (run when bioLeak is installed),
+including the workaround, so the seam cannot drift silently; the test fails
+deliberately when a bioLeak release starts accepting the other modes.
+}
+
 \examples{
 meta <- data.frame(
   sample_id  = c("S1", "S2", "S3", "S4"),

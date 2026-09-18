@@ -32,6 +32,24 @@
   paste0(base_msg, hint)
 }
 
+# Provenance of each edge set, keyed by relation: the source columns recorded
+# by `create_edges()` and, for the thresholded pairwise helpers, the threshold
+# and metric that were applied. Carried in `metadata$edge_sources` so a
+# derivation (and the written split_spec) can report the threshold behind a
+# relatedness or spatial grouping. When several sets share a relation the last
+# one wins; they cannot carry different thresholds in a valid graph anyway.
+.depgraph_collect_edge_sources <- function(edge_sets) {
+  if (inherits(edge_sets, "graph_edge_set")) edge_sets <- list(edge_sets)
+  out <- list()
+  for (set in edge_sets) {
+    src <- set$source
+    relation <- src$relation
+    if (is.null(relation) || !nzchar(relation)) next
+    out[[relation]] <- src
+  }
+  out
+}
+
 #' Assemble and Validate Dependency Graphs
 #'
 #' Combine canonical node and edge tables into a typed dependency graph and
@@ -50,12 +68,10 @@
 #'       first listed subject assignment (recording the ambiguity in
 #'       \code{metadata$warnings}). Defaults to \code{FALSE}.}
 #'   }
-#'   When passed to \code{validate_graph()} or \code{validate_depgraph()},
-#'   the override is merged into the graph's existing
-#'   \code{validation_overrides} for the duration of the call only.
+#'   When passed to \code{validate_graph()}, the override is merged into the
+#'   graph's existing \code{validation_overrides} for the duration of the call
+#'   only.
 #' @param graph A \code{dependency_graph}.
-#' @param checks \strong{Deprecated.} Use \code{levels} and \code{severities}
-#'   instead. Retained for backward compatibility with 0.1.0 callers.
 #' @param error_on_fail If \code{TRUE}, stop when validation errors are found
 #'   across all detected issues from the selected validation levels, even if
 #'   those errors are hidden from \code{issues} by \code{severities}.
@@ -65,9 +81,8 @@
 #'   considered valid.
 #' @param x A \code{dependency_graph}.
 #' @return For \code{build_dependency_graph()}, a \code{dependency_graph}. For
-#'   \code{validate_graph()} and \code{validate_depgraph()}, a
-#'   \code{depgraph_validation_report}. For \code{as_igraph()}, the underlying
-#'   \code{igraph} object.
+#'   \code{validate_graph()}, a \code{depgraph_validation_report}. For
+#'   \code{as_igraph()}, the underlying \code{igraph} object.
 #' @examples
 #' meta <- data.frame(
 #'   sample_id = c("S1", "S2"),
@@ -91,17 +106,38 @@
 build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, validation_overrides = list()) {
   node_data <- .depgraph_bind_data(nodes, "data")
   edge_data <- .depgraph_bind_data(edges, "data")
+  edge_sources <- .depgraph_collect_edge_sources(edges)
+  # Overrides are looked up by name, and an unnamed list would also serialise
+  # as a JSON array where the schema declares an object. Reject it here rather
+  # than writing an invalid file later.
+  .depgraph_assert(
+    is.list(validation_overrides) &&
+      (length(validation_overrides) == 0L ||
+         (!is.null(names(validation_overrides)) && all(nzchar(names(validation_overrides))))),
+    "`validation_overrides` must be a named list.",
+    code = "invalid_argument"
+  )
 
-  .depgraph_assert(any(node_data$node_type == "Sample"), "A dependency graph must contain at least one `Sample` node.")
-  .depgraph_assert(anyDuplicated(node_data$node_id) == 0L, "Duplicate `node_id` values found in node sets.")
-  .depgraph_assert(anyDuplicated(edge_data$edge_id) == 0L, "Duplicate `edge_id` values found in edge sets.")
+  .depgraph_assert(
+    any(node_data$node_type == "Sample"), "A dependency graph must contain at least one `Sample` node.",
+    class = "splitgraph_schema_error", code = "missing_sample_nodes"
+  )
+  .depgraph_assert(
+    anyDuplicated(node_data$node_id) == 0L, "Duplicate `node_id` values found in node sets.",
+    class = "splitgraph_reference_error", code = "duplicate_node_id"
+  )
+  .depgraph_assert(
+    anyDuplicated(edge_data$edge_id) == 0L, "Duplicate `edge_id` values found in edge sets.",
+    class = "splitgraph_reference_error", code = "duplicate_edge_id"
+  )
   .depgraph_assert(
     all(edge_data$from %in% node_data$node_id),
     .depgraph_missing_reference_message(
       missing = setdiff(unique(edge_data$from), node_data$node_id),
       node_ids = node_data$node_id,
       side = "from"
-    )
+    ),
+    class = "splitgraph_reference_error", code = "missing_source_node"
   )
   .depgraph_assert(
     all(edge_data$to %in% node_data$node_id),
@@ -109,7 +145,8 @@ build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name
       missing = setdiff(unique(edge_data$to), node_data$node_id),
       node_ids = node_data$node_id,
       side = "to"
-    )
+    ),
+    class = "splitgraph_reference_error", code = "missing_target_node"
   )
 
   graph_obj <- dependency_graph(
@@ -121,42 +158,26 @@ build_dependency_graph <- function(nodes, edges, graph_name = NULL, dataset_name
       dataset_name = dataset_name,
       created_at = Sys.time(),
       schema_version = .depgraph_schema_version,
-      validation_overrides = validation_overrides
+      validation_overrides = validation_overrides,
+      edge_sources = edge_sources
     )
   )
 
   if (isTRUE(validate)) {
     validation <- validate_graph(graph_obj)
     if (!isTRUE(validation$valid)) {
-      stop(
+      .depgraph_stop(
         paste(
           c("Graph validation failed.", validation$errors, validation$warnings),
           collapse = "\n"
         ),
-        call. = FALSE
+        class = "splitgraph_validation_error",
+        code = "graph_validation_failed"
       )
     }
   }
 
   graph_obj
-}
-
-#' @rdname build_dependency_graph
-#' @export
-build_depgraph <- function(nodes, edges, graph_name = NULL, dataset_name = NULL, validate = TRUE, validation_overrides = list()) {
-  .Deprecated(
-    new = "build_dependency_graph",
-    package = "splitGraph",
-    msg = "`build_depgraph()` is deprecated. Use `build_dependency_graph()` instead."
-  )
-  build_dependency_graph(
-    nodes = nodes,
-    edges = edges,
-    graph_name = graph_name,
-    dataset_name = dataset_name,
-    validate = validate,
-    validation_overrides = validation_overrides
-  )
 }
 
 #' @rdname build_dependency_graph

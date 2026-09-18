@@ -1,0 +1,37 @@
+# Wall-clock budget guard for the core pipeline (tests/testthat/test-performance.R).
+# Runs on Linux only: the budgets are generous, but a shared Windows/macOS runner
+# can be slow enough to produce noise, and the point is to catch a return to
+# superlinear behaviour, not to benchmark.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+name: perf-budget
+
+permissions: read-all
+
+jobs:
+  perf-budget:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      NOT_CRAN: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::pkgload
+
+      - name: Run the performance budget tests
+        run: |
+          Rscript -e 'pkgload::load_all(".", quiet = TRUE); testthat::test_file("tests/testthat/test-performance.R", reporter = "progress", stop_on_failure = TRUE)'
+
+      - name: Print the benchmark table
+        run: Rscript inst/bench/pipeline.R 500 2000 5000

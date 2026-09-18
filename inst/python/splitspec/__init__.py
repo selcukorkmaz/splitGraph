@@ -11,4 +11,4 @@ needs ``pandas``, and the scikit-learn helpers import scikit-learn lazily.
 from .reader import SplitSpec, load_split_spec
 
 __all__ = ["SplitSpec", "load_split_spec"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splitspec"
+version = "0.3.0"
+description = "Pure-Python reader for the splitGraph split_spec JSON interchange format (schema major 0)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Selcuk Korkmaz", email = "selcukorkmaz@gmail.com" }]
+keywords = ["cross-validation", "data-leakage", "biomedical", "splitGraph", "scikit-learn"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# The reader itself needs only the standard library.
+dependencies = []
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.0"]
+sklearn = ["scikit-learn>=1.0", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/selcukorkmaz/splitGraph"
+Schema = "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/0.3.0/split_spec.schema.json"
+
+[tool.setuptools]
+packages = ["splitspec"]

@@ -6,11 +6,10 @@
 
 .depgraph_require_jsonlite <- function() {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
-    stop(
+    .depgraph_stop(c(
       "Package 'jsonlite' is required for splitGraph JSON serialization. ",
-      "Install it with: install.packages(\"jsonlite\").",
-      call. = FALSE
-    )
+      "Install it with: install.packages(\"jsonlite\")."
+    ))
   }
   invisible(TRUE)
 }
@@ -19,10 +18,9 @@
   parent <- dirname(path)
   if (!nzchar(parent) || identical(parent, ".")) return(invisible())
   if (!dir.exists(parent)) {
-    stop(
-      "Parent directory does not exist: ", parent,
-      ". Create it before writing.",
-      call. = FALSE
+    .depgraph_stop(
+      c("Parent directory does not exist: ", parent, ". Create it before writing."),
+      class = "splitgraph_io_error", code = "missing_parent_directory"
     )
   }
   invisible()
@@ -61,10 +59,10 @@
 # Public `$id` of the shipped JSON Schema for an object type, referenced from
 # written JSON via the `$schema` key so external consumers can locate the
 # formal contract. Mirrors the file names under `inst/schema/`.
-.depgraph_schema_url <- function(object_type) {
+.depgraph_schema_url <- function(object_type, version = .depgraph_schema_version) {
   paste0(
     "https://raw.githubusercontent.com/selcukorkmaz/splitGraph/main/inst/schema/",
-    object_type, ".schema.json"
+    version, "/", object_type, ".schema.json"
   )
 }
 
@@ -76,10 +74,10 @@
 
 .depgraph_check_schema_version <- function(observed, what) {
   if (is.null(observed) || !nzchar(observed)) {
-    warning(
-      "Reading ", what, ": no `schema_version` recorded in JSON. ",
-      "Assuming current schema (", .depgraph_schema_version, ").",
-      call. = FALSE
+    .depgraph_warn(
+      c("Reading ", what, ": no `schema_version` recorded in JSON. ",
+        "Assuming current schema (", .depgraph_schema_version, ")."),
+      code = "missing_schema_version"
     )
     return(invisible())
   }
@@ -102,12 +100,12 @@
   } else {
     "migrate_dependency_graph_json()"
   }
-  warning(
-    "Reading ", what, ": JSON schema_version `", observed,
-    "` differs in major version from installed splitGraph schema_version `",
-    .depgraph_schema_version, "`. Loading anyway; consider `", migrator,
-    "` to upgrade the file.",
-    call. = FALSE
+  .depgraph_warn(
+    c("Reading ", what, ": JSON schema_version `", observed,
+      "` differs in major version from installed splitGraph schema_version `",
+      .depgraph_schema_version, "`. Loading anyway; consider `", migrator,
+      "` to upgrade the file."),
+    code = "schema_major_mismatch"
   )
   invisible()
 }
@@ -130,24 +128,36 @@
   x
 }
 
-.depgraph_node_row_to_list <- function(row) {
-  list(
-    node_id   = row$node_id,
-    node_type = row$node_type,
-    node_key  = row$node_key,
-    label     = row$label,
-    attrs     = .depgraph_attrs_to_json(row$attrs[[1L]])
+# Table builders for the JSON writers. jsonlite serialises a data frame with
+# `dataframe = "rows"` (its default) as an array of row objects; handing it a
+# data frame is ~3x faster than building nested R lists, and the emitted text is
+# identical. The `attrs` list-column carries one named list per row; an empty
+# entry is a *named* empty list so it prints as `{}` (the schema types `attrs`
+# as an object), never `[]`. An empty table returns `list()` so it prints `[]`.
+.depgraph_node_rows_to_json <- function(node_data) {
+  if (nrow(node_data) == 0L) return(list())
+  out <- data.frame(
+    node_id = node_data$node_id,
+    node_type = node_data$node_type,
+    node_key = node_data$node_key,
+    label = node_data$label,
+    stringsAsFactors = FALSE
   )
+  out$attrs <- lapply(node_data$attrs, .depgraph_attrs_to_json)
+  out
 }
 
-.depgraph_edge_row_to_list <- function(row) {
-  list(
-    edge_id   = row$edge_id,
-    from      = row$from,
-    to        = row$to,
-    edge_type = row$edge_type,
-    attrs     = .depgraph_attrs_to_json(row$attrs[[1L]])
+.depgraph_edge_rows_to_json <- function(edge_data) {
+  if (nrow(edge_data) == 0L) return(list())
+  out <- data.frame(
+    edge_id = edge_data$edge_id,
+    from = edge_data$from,
+    to = edge_data$to,
+    edge_type = edge_data$edge_type,
+    stringsAsFactors = FALSE
   )
+  out$attrs <- lapply(edge_data$attrs, .depgraph_attrs_to_json)
+  out
 }
 
 # Serialize graph metadata, dropping fields that are not portable
@@ -158,10 +168,17 @@
     dataset_name         = metadata$dataset_name %||% NA_character_,
     created_at           = .depgraph_posix_to_iso(metadata$created_at),
     schema_version       = metadata$schema_version %||% .depgraph_schema_version,
-    validation_overrides = if (is.null(metadata$validation_overrides)) {
+    # An *unnamed* empty list would serialise as `[]`; the schema declares an
+    # object, so force the named empty list (`{}`) whenever there is nothing in it.
+    validation_overrides = if (is.null(metadata$validation_overrides) || length(metadata$validation_overrides) == 0L) {
       structure(list(), names = character())
     } else {
       as.list(metadata$validation_overrides)
+    },
+    edge_sources         = if (is.null(metadata$edge_sources) || length(metadata$edge_sources) == 0L) {
+      structure(list(), names = character())
+    } else {
+      lapply(metadata$edge_sources, as.list)
     }
   )
   out
@@ -177,6 +194,9 @@
   )
   if (!is.null(meta_list$validation_overrides) && length(meta_list$validation_overrides) > 0L) {
     out$validation_overrides <- as.list(meta_list$validation_overrides)
+  }
+  if (!is.null(meta_list$edge_sources) && length(meta_list$edge_sources) > 0L) {
+    out$edge_sources <- lapply(meta_list$edge_sources, as.list)
   }
   out
 }
@@ -200,15 +220,20 @@
 #' @section JSON format:
 #' \preformatted{
 #' {
-#'   "$schema": "https://.../inst/schema/dependency_graph.schema.json",
+#'   "$schema": "https://.../inst/schema/0.3.0/dependency_graph.schema.json",
 #'   "splitGraph_object": "dependency_graph",
-#'   "schema_version": "0.2.0",
+#'   "schema_version": "0.3.0",
 #'   "metadata": {
 #'     "graph_name": "...",
 #'     "dataset_name": "...",
 #'     "created_at": "2026-04-29T10:11:12.000000+0000",
-#'     "schema_version": "0.2.0",
-#'     "validation_overrides": { ... }
+#'     "schema_version": "0.3.0",
+#'     "validation_overrides": { ... },
+#'     "edge_sources": {
+#'       "subject_related_to": { "relation": "...", "from_col": "...",
+#'                               "to_col": "...", "threshold": 0.125,
+#'                               "metric": "kinship" }
+#'     }
 #'   },
 #'   "nodes": [
 #'     { "node_id": "sample:S1", "node_type": "Sample",
@@ -227,17 +252,28 @@
 #' version loads silently (additive-only differences); a differing major
 #' version loads with a warning suggesting \code{migrate_dependency_graph_json()}.
 #' The written JSON also carries a \code{$schema} reference to the formal JSON
-#' Schema shipped in \code{inst/schema/}; validate a file against it with
-#' \code{validate_graph_json()}.
+#' Schema shipped under \code{inst/schema/<schema_version>/}; validate a file
+#' against it with \code{validate_graph_json()} or by passing
+#' \code{validate = TRUE} when reading.
 #'
 #' @param graph A \code{dependency_graph} produced by
 #'   \code{build_dependency_graph()} or \code{graph_from_metadata()}.
 #' @param path Path to write to or read from.
 #' @param pretty If \code{TRUE} (default), the JSON is indented for human
 #'   inspection. Set \code{FALSE} for a compact representation.
+#' @param validate If \code{TRUE}, check the file against the shipped schema
+#'   (\code{validate_graph_json()} / \code{validate_split_spec_json()}) before
+#'   parsing and run \code{validate_graph()} (for graphs) or
+#'   \code{validate_split_spec()} (for specs) on the result, failing with a
+#'   classed error on any violation or error-severity issue. The default
+#'   \code{FALSE} loads the object as written, so a graph saved with
+#'   \code{validate = FALSE} or predating a validation rule still loads; use
+#'   \code{validate = TRUE} for files from untrusted or older sources.
 #' @return \code{write_dependency_graph()} invisibly returns \code{path}.
-#'   \code{read_dependency_graph()} returns a validated
-#'   \code{dependency_graph}.
+#'   \code{read_dependency_graph()} returns a \code{dependency_graph} whose
+#'   node and edge tables are checked for internal consistency with the
+#'   rebuilt \code{igraph}; with the default \code{validate = FALSE} it is
+#'   \emph{not} re-run through \code{validate_graph()}.
 #' @examples
 #' if (requireNamespace("jsonlite", quietly = TRUE)) {
 #'   meta <- data.frame(
@@ -259,14 +295,8 @@ write_dependency_graph <- function(graph, path, pretty = TRUE) {
   .depgraph_assert(is.character(path) && length(path) == 1L && nzchar(path), "`path` must be a single non-empty file path.")
   .depgraph_check_writable_path(path)
 
-  node_rows <- if (nrow(graph$nodes$data) == 0L) list() else lapply(
-    seq_len(nrow(graph$nodes$data)),
-    function(i) .depgraph_node_row_to_list(graph$nodes$data[i, , drop = FALSE])
-  )
-  edge_rows <- if (nrow(graph$edges$data) == 0L) list() else lapply(
-    seq_len(nrow(graph$edges$data)),
-    function(i) .depgraph_edge_row_to_list(graph$edges$data[i, , drop = FALSE])
-  )
+  node_rows <- .depgraph_node_rows_to_json(graph$nodes$data)
+  edge_rows <- .depgraph_edge_rows_to_json(graph$edges$data)
 
   payload <- list(
     `$schema`         = .depgraph_schema_url("dependency_graph"),
@@ -290,24 +320,24 @@ write_dependency_graph <- function(graph, path, pretty = TRUE) {
 
 #' @rdname write_dependency_graph
 #' @export
-read_dependency_graph <- function(path) {
+read_dependency_graph <- function(path, validate = FALSE) {
   .depgraph_require_jsonlite()
   .depgraph_assert(is.character(path) && length(path) == 1L && nzchar(path), "`path` must be a single non-empty file path.")
-  .depgraph_assert(file.exists(path), paste0("File not found: ", path))
+  .depgraph_assert(file.exists(path), paste0("File not found: ", path),
+                   class = "splitgraph_io_error", code = "file_not_found")
 
-  parsed <- tryCatch(
-    jsonlite::fromJSON(path, simplifyVector = FALSE),
-    error = function(e) {
-      stop("Failed to parse JSON at `", path, "`: ", conditionMessage(e), call. = FALSE)
-    }
-  )
+  if (isTRUE(validate)) {
+    .depgraph_require_json_conformance(validate_graph_json(path))
+  }
+
+  parsed <- .depgraph_parse_json_file(path)
 
   obj_type <- parsed$splitGraph_object %||% NA_character_
   if (!identical(as.character(obj_type), "dependency_graph")) {
-    stop(
-      "JSON at `", path, "` is not a serialized dependency_graph (found `",
-      obj_type, "`). Use `read_split_spec()` for split_spec files.",
-      call. = FALSE
+    .depgraph_stop(
+      c("JSON at `", path, "` is not a serialized dependency_graph (found `",
+        obj_type, "`). Use `read_split_spec()` for split_spec files."),
+      class = "splitgraph_schema_error", code = "unexpected_object_type"
     )
   }
 
@@ -344,52 +374,94 @@ read_dependency_graph <- function(path) {
 
   metadata <- .depgraph_metadata_from_json(parsed$metadata)
 
-  dependency_graph(
+  graph <- dependency_graph(
     nodes    = graph_node_set(node_data),
     edges    = graph_edge_set(edge_data),
     graph    = NULL,
     metadata = metadata
   )
+
+  if (isTRUE(validate)) {
+    validate_graph(graph, error_on_fail = TRUE)
+  }
+
+  graph
+}
+
+# Turn a failed JSON conformance report into a classed error.
+.depgraph_require_json_conformance <- function(report) {
+  if (isTRUE(report$valid)) return(invisible(report))
+  .depgraph_stop(
+    c(
+      "JSON at `", report$path, "` does not conform to the ", report$object_type,
+      " schema (", report$schema, "):\n",
+      paste0("  - ", report$issues, collapse = "\n")
+    ),
+    class = "splitgraph_schema_error",
+    code = "json_schema_violation"
+  )
 }
 
 # ---- Public API: split_spec -------------------------------------------------
 
-# Convert a split_spec's sample_data row to a JSON-friendly list, preserving
-# NA as null in the output stream (na = "null" in toJSON does this for us).
-.depgraph_split_spec_row_to_list <- function(row) {
-  list(
-    sample_id      = row$sample_id,
-    sample_node_id = row$sample_node_id,
-    group_id       = row$group_id,
-    primary_group  = row$primary_group,
-    batch_group    = row$batch_group,
-    study_group    = row$study_group,
-    site_group     = row$site_group,
-    region_group   = row$region_group,
-    platform_group = row$platform_group,
-    assay_group    = row$assay_group,
-    timepoint_id   = row$timepoint_id,
-    time_index     = row$time_index,
-    order_rank     = row$order_rank
-  )
+# The canonical sample_data columns, in on-disk order.
+.depgraph_split_spec_columns <- c(
+  "sample_id", "sample_node_id", "group_id", "primary_group",
+  "batch_group", "study_group", "site_group", "region_group",
+  "platform_group", "assay_group", "stratum", "timepoint_id", "time_index", "order_rank"
+)
+
+# split_spec sample_data in canonical column order for the JSON writer. NA is
+# preserved as null in the output stream (`na = "null"` in toJSON); columns
+# absent from an older object are filled with NA so the on-disk shape is stable.
+.depgraph_split_spec_rows_to_json <- function(sample_data) {
+  if (nrow(sample_data) == 0L) return(list())
+  columns <- lapply(.depgraph_split_spec_columns, function(col) {
+    if (col %in% names(sample_data)) sample_data[[col]] else rep(NA, nrow(sample_data))
+  })
+  names(columns) <- .depgraph_split_spec_columns
+  out <- as.data.frame(columns, stringsAsFactors = FALSE, optional = TRUE)
+  row.names(out) <- NULL
+  out
 }
 
+# Metadata fields that are character *vectors* by contract. `toJSON(auto_unbox
+# = TRUE)` would collapse a length-1 vector to a bare string, which violates
+# the shipped schema (`relations_used` is declared as an array) and makes the
+# field's JSON type depend on its length. Wrapping in `as.list()` forces an
+# array regardless of length; the reader unlists them back.
+.depgraph_split_spec_vector_fields <- c("warnings", "relations_used", "enrichment_warnings", "via", "priority")
+
 .depgraph_metadata_split_spec_to_json <- function(metadata) {
-  if (is.null(metadata)) return(structure(list(), names = character()))
+  # An empty (or NULL) metadata list must serialise as `{}`, not `[]`: the
+  # schema declares an object, and an unnamed empty list would emit an array.
+  # Reachable for a `split_spec()` built by hand rather than by
+  # `as_split_spec()`, which always fills metadata.
+  if (is.null(metadata) || length(metadata) == 0L) return(structure(list(), names = character()))
   out <- as.list(metadata)
+  for (k in .depgraph_split_spec_vector_fields) {
+    if (!is.null(out[[k]])) {
+      out[[k]] <- as.list(as.character(out[[k]]))
+    }
+  }
   out
 }
 
 .depgraph_metadata_split_spec_from_json <- function(meta_list) {
   if (is.null(meta_list) || length(meta_list) == 0L) return(list())
   out <- as.list(meta_list)
-  # warnings/relations_used are character vectors; jsonlite keeps them as
-  # lists when simplifyVector = FALSE — coerce back.
-  for (k in c("warnings", "relations_used")) {
+  # warnings/relations_used/enrichment_warnings are character vectors;
+  # jsonlite keeps them as lists when simplifyVector = FALSE — coerce back.
+  for (k in .depgraph_split_spec_vector_fields) {
     if (!is.null(out[[k]])) {
       out[[k]] <- as.character(unlist(out[[k]]))
     }
   }
+  # Scalar provenance fields written as `null` come back as NULL list
+  # elements; restore the typed NA the writer started from so a spec
+  # round-trips its metadata exactly.
+  if ("threshold" %in% names(out) && is.null(out$threshold)) out$threshold <- NA_real_
+  if ("threshold_metric" %in% names(out) && is.null(out$threshold_metric)) out$threshold_metric <- NA_character_
   out
 }
 
@@ -409,27 +481,37 @@ read_dependency_graph <- function(path) {
 #' @section JSON format:
 #' \preformatted{
 #' {
-#'   "$schema": "https://.../inst/schema/split_spec.schema.json",
+#'   "$schema": "https://.../inst/schema/0.3.0/split_spec.schema.json",
 #'   "splitGraph_object": "split_spec",
-#'   "schema_version": "0.2.0",
+#'   "schema_version": "0.3.0",
 #'   "group_var": "group_id",
 #'   "block_vars": ["batch_group", "study_group"],
 #'   "time_var": "order_rank",
+#'   "stratum_var": "stratum",
 #'   "ordering_required": false,
 #'   "constraint_mode": "subject",
 #'   "constraint_strategy": "subject",
 #'   "recommended_resampling": "grouped_cv",
-#'   "metadata": { ... },
+#'   "metadata": { "relations_used": [...], "via": [...], "priority": [...],
+#'                 "threshold": null, "warnings": [...], ... },
 #'   "sample_data": [
-#'     { "sample_id": "S1", "group_id": "subject:P1", ... },
+#'     { "sample_id": "S1", "group_id": "subject:P1", "stratum": "case", ... },
 #'     ...
 #'   ]
 #' }
 #' }
+#' Vector-valued metadata fields are always written as arrays, even with a
+#' single element. \code{stratum_var} and the \code{stratum} column were added
+#' in schema 0.3.0; files written by earlier versions load with \code{stratum}
+#' filled as \code{NA}.
 #'
 #' @param spec A \code{split_spec} produced by \code{as_split_spec()}.
 #' @param path Path to write to or read from.
 #' @param pretty If \code{TRUE} (default), the JSON is indented.
+#' @param validate If \code{TRUE}, check the file against the shipped schema
+#'   before parsing and run \code{validate_split_spec()} on the result, failing
+#'   with a classed error on any violation or error-severity issue. Defaults to
+#'   \code{FALSE}.
 #' @return \code{write_split_spec()} invisibly returns \code{path}.
 #'   \code{read_split_spec()} returns a \code{split_spec}.
 #' @examples
@@ -455,10 +537,7 @@ write_split_spec <- function(spec, path, pretty = TRUE) {
   .depgraph_assert(is.character(path) && length(path) == 1L && nzchar(path), "`path` must be a single non-empty file path.")
   .depgraph_check_writable_path(path)
 
-  sample_rows <- if (nrow(spec$sample_data) == 0L) list() else lapply(
-    seq_len(nrow(spec$sample_data)),
-    function(i) .depgraph_split_spec_row_to_list(spec$sample_data[i, , drop = FALSE])
-  )
+  sample_rows <- .depgraph_split_spec_rows_to_json(spec$sample_data)
 
   payload <- list(
     `$schema`               = .depgraph_schema_url("split_spec"),
@@ -467,6 +546,7 @@ write_split_spec <- function(spec, path, pretty = TRUE) {
     group_var               = spec$group_var,
     block_vars              = if (length(spec$block_vars) == 0L) list() else as.list(spec$block_vars),
     time_var                = spec$time_var %||% NA_character_,
+    stratum_var             = spec$stratum_var %||% NA_character_,
     ordering_required       = isTRUE(spec$ordering_required),
     constraint_mode         = spec$constraint_mode %||% NA_character_,
     constraint_strategy     = spec$constraint_strategy %||% NA_character_,
@@ -488,24 +568,24 @@ write_split_spec <- function(spec, path, pretty = TRUE) {
 
 #' @rdname write_split_spec
 #' @export
-read_split_spec <- function(path) {
+read_split_spec <- function(path, validate = FALSE) {
   .depgraph_require_jsonlite()
   .depgraph_assert(is.character(path) && length(path) == 1L && nzchar(path), "`path` must be a single non-empty file path.")
-  .depgraph_assert(file.exists(path), paste0("File not found: ", path))
+  .depgraph_assert(file.exists(path), paste0("File not found: ", path),
+                   class = "splitgraph_io_error", code = "file_not_found")
 
-  parsed <- tryCatch(
-    jsonlite::fromJSON(path, simplifyVector = FALSE),
-    error = function(e) {
-      stop("Failed to parse JSON at `", path, "`: ", conditionMessage(e), call. = FALSE)
-    }
-  )
+  if (isTRUE(validate)) {
+    .depgraph_require_json_conformance(validate_split_spec_json(path))
+  }
+
+  parsed <- .depgraph_parse_json_file(path)
 
   obj_type <- parsed$splitGraph_object %||% NA_character_
   if (!identical(as.character(obj_type), "split_spec")) {
-    stop(
-      "JSON at `", path, "` is not a serialized split_spec (found `",
-      obj_type, "`). Use `read_dependency_graph()` for dependency_graph files.",
-      call. = FALSE
+    .depgraph_stop(
+      c("JSON at `", path, "` is not a serialized split_spec (found `",
+        obj_type, "`). Use `read_dependency_graph()` for dependency_graph files."),
+      class = "splitgraph_schema_error", code = "unexpected_object_type"
     )
   }
 
@@ -513,22 +593,7 @@ read_split_spec <- function(path) {
 
   sample_rows <- parsed$sample_data %||% list()
   sample_data <- if (length(sample_rows) == 0L) {
-    data.frame(
-      sample_id      = character(),
-      sample_node_id = character(),
-      group_id       = character(),
-      primary_group  = character(),
-      batch_group    = character(),
-      study_group    = character(),
-      site_group     = character(),
-      region_group   = character(),
-      platform_group = character(),
-      assay_group    = character(),
-      timepoint_id   = character(),
-      time_index     = numeric(),
-      order_rank     = integer(),
-      stringsAsFactors = FALSE
-    )
+    .split_spec_sample_data_template(0L)
   } else {
     .depgraph_chr <- function(rows, key) {
       vapply(rows, function(r) {
@@ -560,6 +625,7 @@ read_split_spec <- function(path) {
       region_group   = .depgraph_chr(sample_rows, "region_group"),
       platform_group = .depgraph_chr(sample_rows, "platform_group"),
       assay_group    = .depgraph_chr(sample_rows, "assay_group"),
+      stratum        = .depgraph_chr(sample_rows, "stratum"),
       timepoint_id   = .depgraph_chr(sample_rows, "timepoint_id"),
       time_index     = .depgraph_num(sample_rows, "time_index"),
       order_rank     = .depgraph_int(sample_rows, "order_rank"),
@@ -578,19 +644,43 @@ read_split_spec <- function(path) {
 
   time_var_raw <- parsed$time_var
   time_var <- if (is.null(time_var_raw) || (length(time_var_raw) == 1L && is.na(time_var_raw))) NULL else as.character(time_var_raw)
+  stratum_var_raw <- parsed$stratum_var
+  stratum_var <- if (is.null(stratum_var_raw) || (length(stratum_var_raw) == 1L && is.na(stratum_var_raw))) NULL else as.character(stratum_var_raw)
   constraint_mode <- if (is.null(parsed$constraint_mode) || is.na(parsed$constraint_mode)) NULL else as.character(parsed$constraint_mode)
   constraint_strategy <- if (is.null(parsed$constraint_strategy) || is.na(parsed$constraint_strategy)) NULL else as.character(parsed$constraint_strategy)
-  recommended_resampling <- if (is.null(parsed$recommended_resampling) || is.na(parsed$recommended_resampling)) NULL else as.character(parsed$recommended_resampling)
+  recommended_resampling <- if (is.null(parsed$recommended_resampling) ||
+                                  is.na(parsed$recommended_resampling)) {
+    NULL
+  } else {
+    as.character(parsed$recommended_resampling)
+  }
 
-  split_spec(
+  spec <- split_spec(
     sample_data            = sample_data,
     group_var              = parsed$group_var %||% "group_id",
     block_vars             = block_vars,
     time_var               = time_var,
+    stratum_var            = stratum_var,
     ordering_required      = isTRUE(parsed$ordering_required),
     constraint_mode        = constraint_mode,
     constraint_strategy    = constraint_strategy,
     recommended_resampling = recommended_resampling,
     metadata               = .depgraph_metadata_split_spec_from_json(parsed$metadata)
   )
+
+  if (isTRUE(validate)) {
+    preflight <- validate_split_spec(spec)
+    if (!isTRUE(preflight$valid)) {
+      .depgraph_stop(
+        c(
+          "split_spec read from `", path, "` fails preflight validation:\n",
+          paste0("  - ", preflight$issues$message[preflight$issues$severity == "error"], collapse = "\n")
+        ),
+        class = "splitgraph_validation_error",
+        code = "split_spec_validation_failed"
+      )
+    }
+  }
+
+  spec
 }

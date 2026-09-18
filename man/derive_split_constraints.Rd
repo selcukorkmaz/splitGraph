@@ -32,7 +32,15 @@ modes.}
 
 \item{via}{Optional dependency sources used for composite grouping. May be
 given as lower-case modes such as \code{"subject"} or node types such as
-\code{"Subject"}.}
+\code{"Subject"}. Any direct-assignment source (\code{"subject"},
+\code{"batch"}, \code{"study"}, \code{"time"}, \code{"site"},
+\code{"region"}, \code{"platform"}, \code{"assay"}) and either pairwise
+source (\code{"relatedness"}, \code{"spatial"}) can be combined. In the
+strict strategy a pairwise source contributes its thresholded edges to the
+same connected-component search as the direct relations; in the
+rule-based strategy it contributes the component label, and a singleton
+component counts as "no assignment" so the sample falls through to the
+next mode. Defaults to \code{c("subject", "batch", "study", "time")}.}
 
 \item{priority}{Optional priority order used for
 \code{strategy = "rule_based"}.}
