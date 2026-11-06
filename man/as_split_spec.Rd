@@ -105,7 +105,18 @@ dependency on any of them.
 
 \code{summarize_leakage_risks()} reuses \code{validate_graph()} and
 \code{split_constraint} metadata rather than duplicating downstream
-evaluation logic.
+evaluation logic. When a \code{constraint} is supplied, validation issues for
+\code{repeated_subject_samples}, \code{subject_cross_study_overlap}, and
+\code{subject_cross_site_overlap} are checked directly against the actual
+group assignments of the issue's affected samples in
+\code{constraint$sample_map}: \code{severed} is \code{TRUE} when all
+affected samples have complete, usable assignments and share a single group,
+\code{FALSE} when observed assignments place affected samples in different
+groups, and \code{NA} when assignments are incomplete or insufficient to
+establish co-membership without an observed split. Other leakage warning
+codes without sample-level co-membership sets (such as
+\code{heavy_batch_reuse} and \code{missing_time_ordering}) are evaluated
+from the constraint mode and composite \code{via} metadata.
 }
 \section{What downstream consumers read}{
 

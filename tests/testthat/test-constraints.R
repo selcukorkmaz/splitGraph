@@ -304,7 +304,7 @@ test_that("composite strict constraints use transitive dependency closure", {
 
 test_that("composite strict respects sample subset (no bridging through excluded samples)", {
   # Regression test for C1: .derive_composite_strict_constraints used to
-  # compute components over the WHOLE graph, then filter to `samples` — so two
+  # compute components over the WHOLE graph, then filter to `samples` -- so two
   # in-subset samples connected only through an out-of-subset sample silently
   # landed in the same group, leaking out-of-subset structure into the split.
   graph <- make_constraint_graph("index")

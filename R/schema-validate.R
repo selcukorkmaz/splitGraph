@@ -62,9 +62,14 @@ print.splitgraph_json_report <- function(x, ...) {
 
 # A parsed JSON value that is either absent/null or a scalar of the given kind.
 .depgraph_is_null_or_string <- function(x) is.null(x) || .depgraph_is_string(x)
-.depgraph_is_null_or_number <- function(x) is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x))
+.depgraph_is_null_or_number <- function(x) {
+  is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x))
+}
 .depgraph_is_null_or_integer <- function(x) {
-  is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x) && x == trunc(x))
+  is.null(x) || (is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x) && x == trunc(x))
+}
+.depgraph_is_null_or_boolean <- function(x) {
+  is.null(x) || (is.logical(x) && length(x) == 1L && !is.na(x))
 }
 # JSON objects and arrays both parse to lists, and jsonlite distinguishes them
 # by names even when empty: `{}` has `character(0)` names, `[]` has NULL names.
@@ -80,14 +85,38 @@ print.splitgraph_json_report <- function(x, ...) {
 #' Validate Serialized splitGraph JSON Against the Shipped Schema
 #'
 #' Check that a JSON file written by \code{write_dependency_graph()} or
-#' \code{write_split_spec()} conforms to the splitGraph on-disk contract. The
-#' formal JSON Schemas (Draft 2020-12) ship in
-#' \code{inst/schema/<schema_version>/} and are
-#' referenced from the written JSON via the \code{$schema} key; these functions
-#' apply a dependency-free structural check of the same invariants (required
-#' fields, value types, node/edge-type enumerations, and referential integrity
-#' of edge endpoints) so a handoff file can be validated without a JSON Schema
-#' engine.
+#' \code{write_split_spec()} conforms to the splitGraph on-disk format contract.
+#' The formal JSON Schemas (Draft 2020-12) ship in
+#' \code{inst/schema/<schema_version>/} and are referenced from the written JSON
+#' via the \code{$schema} key; these functions apply a dependency-free R format
+#' check of the schema's required fields, JSON value types (including
+#' string-array elements in \code{metadata}), node/edge-type enumerations, and
+#' referential integrity of edge endpoints so a handoff file can be validated
+#' without an external JSON Schema runtime dependency.
+#'
+#' @details
+#' \pkg{splitGraph} distinguishes three validation layers across serialization
+#' and cross-language handoff:
+#' \enumerate{
+#'   \item \strong{Formal JSON Schema} (\code{inst/schema/<version>/*.schema.json}):
+#'     Draft 2020-12 schemas defining the on-disk structural contract (required
+#'     properties, JSON types, \code{schema_version} pattern, and node/edge
+#'     enumerations) for external schema validators.
+#'   \item \strong{R format validation} (\code{validate_graph_json()},
+#'     \code{validate_split_spec_json()}): dependency-free R checks of the
+#'     schema's structural and type constraints, plus edge-endpoint referential
+#'     integrity for \code{dependency_graph} files. Older compatible
+#'     \code{0.x.y} schema versions remain readable when optional fields added
+#'     in newer minor versions are absent.
+#'   \item \strong{Semantic and preflight validation} (\code{validate_graph()},
+#'     \code{validate_split_spec()}, and Python \code{SplitSpec} checks):
+#'     domain-level invariants such as relation cardinality, acyclic time
+#'     precedence, leakage diagnostics, non-empty sample tables, unique sample
+#'     identifiers, complete ordering when \code{ordering_required = TRUE}, and
+#'     forward-split rank/group disjointness. Passing \code{validate = TRUE} to
+#'     \code{read_dependency_graph()} or \code{read_split_spec()} runs both the
+#'     R format check and the semantic/preflight validator.
+#' }
 #'
 #' @param path Path to a serialized \code{dependency_graph} or
 #'   \code{split_spec} JSON file.
@@ -109,6 +138,11 @@ validate_graph_json <- function(path) {
   parsed <- .depgraph_parse_json_file(path)
   issues <- character()
 
+  if (!.depgraph_is_json_object(parsed)) {
+    issues <- c(issues, "Top-level JSON value must be an object.")
+    return(.depgraph_json_report("dependency_graph", path, issues))
+  }
+
   if (!identical(as.character(parsed$splitGraph_object %||% NA_character_), "dependency_graph")) {
     issues <- c(issues, paste0(
       "`splitGraph_object` must be \"dependency_graph\" (found \"",
@@ -117,6 +151,9 @@ validate_graph_json <- function(path) {
     return(.depgraph_json_report("dependency_graph", path, issues))
   }
 
+  if (!is.null(parsed[["$schema"]]) && !.depgraph_is_string(parsed[["$schema"]])) {
+    issues <- c(issues, "`$schema` must be a string.")
+  }
   if (!.depgraph_valid_version(parsed$schema_version)) {
     issues <- c(issues, "`schema_version` must be a \"X.Y.Z\" string.")
   }
@@ -124,9 +161,37 @@ validate_graph_json <- function(path) {
     if (!.depgraph_is_json_object(parsed$metadata)) {
       issues <- c(issues, "`metadata` must be a JSON object.")
     } else {
+      for (field in c("graph_name", "dataset_name", "created_at")) {
+        if (!.depgraph_is_null_or_string(parsed$metadata[[field]])) {
+          issues <- c(issues, paste0("metadata.", field, " must be a string or null."))
+        }
+      }
+      if (!is.null(parsed$metadata$schema_version) && !.depgraph_is_string(parsed$metadata$schema_version)) {
+        issues <- c(issues, "metadata.schema_version must be a string.")
+      }
       for (field in c("validation_overrides", "edge_sources")) {
         if (!is.null(parsed$metadata[[field]]) && !.depgraph_is_json_object(parsed$metadata[[field]])) {
           issues <- c(issues, paste0("metadata.", field, " must be a JSON object."))
+        }
+      }
+      if (.depgraph_is_json_object(parsed$metadata$edge_sources)) {
+        for (rel_name in names(parsed$metadata$edge_sources)) {
+          src <- parsed$metadata$edge_sources[[rel_name]]
+          if (!.depgraph_is_json_object(src)) {
+            issues <- c(issues, paste0("metadata.edge_sources.", rel_name, " must be a JSON object."))
+            next
+          }
+          if (!is.null(src$relation) && !.depgraph_is_string(src$relation)) {
+            issues <- c(issues, paste0("metadata.edge_sources.", rel_name, ".relation must be a string."))
+          }
+          for (sfield in c("from_col", "to_col", "metric")) {
+            if (!.depgraph_is_null_or_string(src[[sfield]])) {
+              issues <- c(issues, paste0("metadata.edge_sources.", rel_name, ".", sfield, " must be a string or null."))
+            }
+          }
+          if (!.depgraph_is_null_or_number(src$threshold)) {
+            issues <- c(issues, paste0("metadata.edge_sources.", rel_name, ".threshold must be a number or null."))
+          }
         }
       }
     }
@@ -158,6 +223,9 @@ validate_graph_json <- function(path) {
     node_ids <- c(node_ids, r$node_id)
     if (!r$node_type %in% .depgraph_node_types) {
       issues <- c(issues, paste0("node[", i, "]: unknown `node_type` \"", r$node_type, "\"."))
+    }
+    if (!.depgraph_is_null_or_string(r$label)) {
+      issues <- c(issues, paste0("node[", i, "]: `label` must be a string or null."))
     }
     if (!is.null(r$attrs) && !.depgraph_is_json_object(r$attrs)) {
       issues <- c(issues, paste0("node[", i, "]: `attrs` must be a JSON object."))
@@ -201,6 +269,11 @@ validate_split_spec_json <- function(path) {
   parsed <- .depgraph_parse_json_file(path)
   issues <- character()
 
+  if (!.depgraph_is_json_object(parsed)) {
+    issues <- c(issues, "Top-level JSON value must be an object.")
+    return(.depgraph_json_report("split_spec", path, issues))
+  }
+
   if (!identical(as.character(parsed$splitGraph_object %||% NA_character_), "split_spec")) {
     issues <- c(issues, paste0(
       "`splitGraph_object` must be \"split_spec\" (found \"",
@@ -209,6 +282,9 @@ validate_split_spec_json <- function(path) {
     return(.depgraph_json_report("split_spec", path, issues))
   }
 
+  if (!is.null(parsed[["$schema"]]) && !.depgraph_is_string(parsed[["$schema"]])) {
+    issues <- c(issues, "`$schema` must be a string.")
+  }
   if (!.depgraph_valid_version(parsed$schema_version)) {
     issues <- c(issues, "`schema_version` must be a \"X.Y.Z\" string.")
   }
@@ -224,7 +300,7 @@ validate_split_spec_json <- function(path) {
       issues <- c(issues, paste0("`", field, "` must be a string or null."))
     }
   }
-  if (!is.null(parsed$ordering_required) && !(is.logical(parsed$ordering_required) && length(parsed$ordering_required) == 1L)) {
+  if (!.depgraph_is_null_or_boolean(parsed$ordering_required)) {
     issues <- c(issues, "`ordering_required` must be a boolean.")
   }
 
@@ -234,12 +310,30 @@ validate_split_spec_json <- function(path) {
       issues <- c(issues, "`metadata` must be a JSON object.")
     } else {
       for (field in .depgraph_split_spec_vector_fields) {
-        if (!is.null(metadata[[field]]) && !.depgraph_is_json_array(metadata[[field]])) {
+        if (!is.null(metadata[[field]]) &&
+            !(.depgraph_is_json_array(metadata[[field]]) &&
+              all(vapply(metadata[[field]], .depgraph_is_string, logical(1))))) {
           issues <- c(issues, paste0("metadata.", field, " must be an array of strings (even with one element)."))
+        }
+      }
+      for (field in c(
+        "graph_name", "dataset_name", "source_mode", "source_strategy",
+        "threshold_metric", "splitgraph_version", "igraph_version", "derived_at"
+      )) {
+        if (!.depgraph_is_null_or_string(metadata[[field]])) {
+          issues <- c(issues, paste0("metadata.", field, " must be a string or null."))
         }
       }
       if (!.depgraph_is_null_or_number(metadata$threshold)) {
         issues <- c(issues, "metadata.threshold must be a number or null.")
+      }
+      for (field in c("n_samples", "n_groups")) {
+        if (!.depgraph_is_null_or_integer(metadata[[field]])) {
+          issues <- c(issues, paste0("metadata.", field, " must be an integer or null."))
+        }
+      }
+      if (!.depgraph_is_null_or_boolean(metadata$enriched_from_graph)) {
+        issues <- c(issues, "metadata.enriched_from_graph must be a boolean or null.")
       }
     }
   }

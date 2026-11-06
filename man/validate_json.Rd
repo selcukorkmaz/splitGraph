@@ -21,14 +21,38 @@ A \code{splitgraph_json_report}: a list with \code{valid} (logical),
 }
 \description{
 Check that a JSON file written by \code{write_dependency_graph()} or
-\code{write_split_spec()} conforms to the splitGraph on-disk contract. The
-formal JSON Schemas (Draft 2020-12) ship in
-\code{inst/schema/<schema_version>/} and are
-referenced from the written JSON via the \code{$schema} key; these functions
-apply a dependency-free structural check of the same invariants (required
-fields, value types, node/edge-type enumerations, and referential integrity
-of edge endpoints) so a handoff file can be validated without a JSON Schema
-engine.
+\code{write_split_spec()} conforms to the splitGraph on-disk format contract.
+The formal JSON Schemas (Draft 2020-12) ship in
+\code{inst/schema/<schema_version>/} and are referenced from the written JSON
+via the \code{$schema} key; these functions apply a dependency-free R format
+check of the schema's required fields, JSON value types (including
+string-array elements in \code{metadata}), node/edge-type enumerations, and
+referential integrity of edge endpoints so a handoff file can be validated
+without an external JSON Schema runtime dependency.
+}
+\details{
+\pkg{splitGraph} distinguishes three validation layers across serialization
+and cross-language handoff:
+\enumerate{
+  \item \strong{Formal JSON Schema} (\code{inst/schema/<version>/*.schema.json}):
+    Draft 2020-12 schemas defining the on-disk structural contract (required
+    properties, JSON types, \code{schema_version} pattern, and node/edge
+    enumerations) for external schema validators.
+  \item \strong{R format validation} (\code{validate_graph_json()},
+    \code{validate_split_spec_json()}): dependency-free R checks of the
+    schema's structural and type constraints, plus edge-endpoint referential
+    integrity for \code{dependency_graph} files. Older compatible
+    \code{0.x.y} schema versions remain readable when optional fields added
+    in newer minor versions are absent.
+  \item \strong{Semantic and preflight validation} (\code{validate_graph()},
+    \code{validate_split_spec()}, and Python \code{SplitSpec} checks):
+    domain-level invariants such as relation cardinality, acyclic time
+    precedence, leakage diagnostics, non-empty sample tables, unique sample
+    identifiers, complete ordering when \code{ordering_required = TRUE}, and
+    forward-split rank/group disjointness. Passing \code{validate = TRUE} to
+    \code{read_dependency_graph()} or \code{read_split_spec()} runs both the
+    R format check and the semantic/preflight validator.
+}
 }
 \examples{
 if (requireNamespace("jsonlite", quietly = TRUE)) {

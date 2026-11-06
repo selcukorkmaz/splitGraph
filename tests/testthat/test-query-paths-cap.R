@@ -11,7 +11,7 @@ make_path_graph <- function() {
 
 test_that("query_paths uses a finite default safety cap and returns finite results", {
   g <- make_path_graph()
-  # The default max_length should be finite — no Inf, no -1.
+  # The default max_length should be finite -- no Inf, no -1.
   res <- query_paths(g, from = "sample:S1", to = "subject:P1")
   expect_s3_class(res, "graph_query_result")
   # We should reach P1 from S1 within the cap.

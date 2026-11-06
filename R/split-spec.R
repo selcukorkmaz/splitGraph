@@ -305,7 +305,18 @@
 #'
 #' \code{summarize_leakage_risks()} reuses \code{validate_graph()} and
 #' \code{split_constraint} metadata rather than duplicating downstream
-#' evaluation logic.
+#' evaluation logic. When a \code{constraint} is supplied, validation issues for
+#' \code{repeated_subject_samples}, \code{subject_cross_study_overlap}, and
+#' \code{subject_cross_site_overlap} are checked directly against the actual
+#' group assignments of the issue's affected samples in
+#' \code{constraint$sample_map}: \code{severed} is \code{TRUE} when all
+#' affected samples have complete, usable assignments and share a single group,
+#' \code{FALSE} when observed assignments place affected samples in different
+#' groups, and \code{NA} when assignments are incomplete or insufficient to
+#' establish co-membership without an observed split. Other leakage warning
+#' codes without sample-level co-membership sets (such as
+#' \code{heavy_batch_reuse} and \code{missing_time_ordering}) are evaluated
+#' from the constraint mode and composite \code{via} metadata.
 #'
 #' @section What downstream consumers read:
 #' The \code{split_spec} contract is wider than any single consumer uses today.
@@ -675,7 +686,49 @@ validate_split_spec <- function(x) {
   )
 }
 
-.leakage_summary_from_validation <- function(validation, constraint = NULL) {
+.leakage_issue_co_membership <- function(sample_nids, sample_map) {
+  if (length(sample_nids) < 2L || !is.data.frame(sample_map) ||
+      !all(c("sample_node_id", "group_id") %in% names(sample_map))) {
+    return(NA)
+  }
+  smap_nodes <- as.character(sample_map$sample_node_id)
+  smap_groups <- as.character(sample_map$group_id)
+
+  usable_groups <- character()
+  all_complete <- TRUE
+  for (s in sample_nids) {
+    idx <- which(!is.na(smap_nodes) & smap_nodes == s)
+    if (length(idx) == 0L) {
+      all_complete <- FALSE
+      next
+    }
+    vals <- smap_groups[idx]
+    valid_vals <- !is.na(vals) & nzchar(trimws(vals))
+    if (!all(valid_vals)) {
+      all_complete <- FALSE
+    }
+    u_vals <- unique(vals[valid_vals])
+    if (length(u_vals) > 1L) {
+      return(FALSE)
+    }
+    if (length(u_vals) == 1L) {
+      usable_groups <- c(usable_groups, u_vals)
+    } else {
+      all_complete <- FALSE
+    }
+  }
+
+  n_distinct <- length(unique(usable_groups))
+  if (n_distinct > 1L) {
+    return(FALSE)
+  }
+  if (all_complete && n_distinct == 1L) {
+    return(TRUE)
+  }
+  NA
+}
+
+.leakage_summary_from_validation <- function(validation, constraint = NULL, sample_node_ids = NULL) {
   if (nrow(validation$issues) == 0L) {
     return(data.frame(
       severity = character(),
@@ -690,35 +743,30 @@ validate_split_spec <- function(x) {
 
   mode <- if (!is.null(constraint)) as.character(constraint$metadata$mode %||% NA) else NA_character_
   via_modes <- if (!is.null(constraint)) .depgraph_constraint_via_modes(constraint) else character()
-  group_map <- if (!is.null(constraint) && !is.null(constraint$sample_map) &&
-                   all(c("sample_node_id", "group_id") %in% names(constraint$sample_map))) {
-    stats::setNames(
-      as.character(constraint$sample_map$group_id),
-      as.character(constraint$sample_map$sample_node_id)
-    )
-  } else {
-     NULL
-  }
+  smap <- if (!is.null(constraint)) constraint$sample_map else NULL
 
   severed <- vapply(
     seq_len(nrow(validation$issues)),
     function(i) {
-      code <- as.character(validation$issues$code[[i]])
-      sem <- .leakage_severed_by_constraint(code, mode = if (is.na(mode)) NULL else mode, via_modes = via_modes)
-      if (!isFALSE(sem) || is.null(group_map)) {
-        return(sem)
+      if (is.null(constraint)) {
+        return(NA)
       }
+      code <- as.character(validation$issues$code[[i]])
       if (code %in% c("repeated_subject_samples", "subject_cross_study_overlap", "subject_cross_site_overlap")) {
         nids <- as.character(validation$issues$node_ids[[i]])
-        sample_nids <- nids[startsWith(nids, "sample:")]
-        if (length(sample_nids) >= 2L && all(sample_nids %in% names(group_map))) {
-          g_vals <- unname(group_map[sample_nids])
-          if (all(!is.na(g_vals) & nzchar(g_vals)) && length(unique(g_vals)) == 1L) {
-            return(TRUE)
-          }
+        is_sample <- if (!is.null(sample_node_ids)) {
+          nids %in% sample_node_ids | startsWith(nids, "sample:")
+        } else {
+          startsWith(nids, "sample:")
         }
+        sample_nids <- unique(nids[is_sample])
+        return(.leakage_issue_co_membership(sample_nids, smap))
       }
-      sem
+      .leakage_severed_by_constraint(
+        code,
+        mode = if (is.na(mode)) NULL else mode,
+        via_modes = via_modes
+      )
     },
     logical(1)
   )
@@ -907,7 +955,12 @@ summarize_leakage_risks <- function(graph, constraint = NULL, split_spec = NULL,
   }
 
   validation <- validation %||% validate_graph(graph)
-  validation_diag <- .leakage_summary_from_validation(validation, constraint = constraint)
+  sample_node_ids <- graph$nodes$data$node_id[graph$nodes$data$node_type == "Sample"]
+  validation_diag <- .leakage_summary_from_validation(
+    validation,
+    constraint = constraint,
+    sample_node_ids = sample_node_ids
+  )
   constraint_diag <- .leakage_summary_from_constraint(constraint)
   split_spec_info <- .leakage_summary_from_split_spec(split_spec)
 

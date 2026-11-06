@@ -427,13 +427,16 @@
   if (nrow(time_nodes) > 0L) {
     for (i in seq_len(nrow(time_nodes))) {
       value <- .depgraph_extract_attr(time_nodes$attrs[[i]], "time_index")
-      converted <- suppressWarnings(as.numeric(value))
-      if (!is.na(value) && is.na(converted)) {
+      has_raw_value <- !is.null(value) && length(value) > 0L &&
+        (!is.na(value[[1L]]) || is.nan(value[[1L]])) &&
+        (!is.character(value[[1L]]) || nzchar(trimws(value[[1L]])))
+      parsed <- .depgraph_parse_time_index(value)
+      if (has_raw_value && (length(parsed) == 0L || is.na(parsed[[1L]]))) {
         issues[[length(issues) + 1L]] <- .new_validation_issue(
           level = "semantic",
           severity = "warning",
           code = "invalid_time_index",
-          message = paste0("Timepoint node `", time_nodes$node_id[[i]], "` has a non-numeric `time_index`."),
+          message = paste0("Timepoint node `", time_nodes$node_id[[i]], "` has a non-numeric or non-finite `time_index`."),
           node_ids = time_nodes$node_id[[i]]
         )
       }
@@ -607,12 +610,10 @@
       time_nodes$attrs,
       function(x) {
         value <- .depgraph_extract_attr(x, "time_index")
-        if (length(value) == 0L || is.na(value)) {
-          return(NA_character_)
-        }
-        as.character(value)
+        parsed <- .depgraph_parse_time_index(value)
+        if (length(parsed) == 0L) NA_real_ else parsed[[1L]]
       },
-      FUN.VALUE = character(1)
+      FUN.VALUE = numeric(1)
     )
     if (!has_precedes && (length(time_indices) == 0L || all(is.na(time_indices)))) {
       issues[[length(issues) + 1L]] <- .new_validation_issue(

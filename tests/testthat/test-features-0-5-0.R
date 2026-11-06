@@ -279,6 +279,322 @@ test_that("F4: Python SplitSpec.iter_splits yields leak-free grouped and tempora
     "assert all(max(r3[i] for i in tr) < min(r3[i] for i in te) for tr, te in splits3); ",
     "print('OK')"
   )
-  res <- system2(py, c("-c", shQuote(code)), stdout = TRUE, stderr = TRUE)
+  res <- system2(py, c("-B", "-c", shQuote(code)), stdout = TRUE, stderr = TRUE)
   expect_identical(tail(res, 1L), "OK")
+})
+
+test_that("B04 / D08: summarize_leakage_risks and compare_split_constraints verify subject risks against actual sample_map assignments", {
+  # 1. D08: multi-subject override where s1 is assigned to p1 while also linked to p2 (with s2, s3)
+  g_d08 <- graph_from_metadata(
+    data.frame(
+      sample_id = c("s1", "s2", "s3"),
+      subject_id = c("p1", "p2", "p2"),
+      stringsAsFactors = FALSE
+    ),
+    validation_overrides = list(allow_multi_subject_samples = TRUE)
+  )
+  edge <- create_edges(
+    data.frame(s = "s1", p = "p2", stringsAsFactors = FALSE),
+    "s", "p", "Sample", "Subject", "sample_belongs_to_subject"
+  )
+  g_d08 <- add_edges(g_d08, edge)
+  con_d08 <- derive_split_constraints(g_d08, "subject")
+  diag_d08 <- as.data.frame(summarize_leakage_risks(g_d08, constraint = con_d08))
+  expect_identical(diag_d08$severed[diag_d08$category == "repeated_subject_samples"], FALSE)
+
+  cmp_d08 <- as.data.frame(compare_split_constraints(g_d08, modes = "subject", k = 2L))
+  expect_identical(cmp_d08$n_risks_severed, 0L)
+  expect_identical(cmp_d08$n_risks_remaining, 1L)
+
+  # 2. Complete same-group assignments return TRUE; different-group assignments return FALSE
+  g_site <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2", "s3", "s4"),
+    subject_id = c("p1", "p1", "p2", "p2"),
+    site_id = c("site1", "site2", "site1", "site2"),
+    study_id = c("st1", "st2", "st1", "st2"),
+    stringsAsFactors = FALSE
+  ))
+  diag_subj <- as.data.frame(summarize_leakage_risks(g_site, constraint = derive_split_constraints(g_site, "subject")))
+  expect_true(all(diag_subj$severed[diag_subj$category %in% c(
+    "repeated_subject_samples", "subject_cross_study_overlap", "subject_cross_site_overlap"
+  )]))
+  diag_site <- as.data.frame(summarize_leakage_risks(g_site, constraint = derive_split_constraints(g_site, "site")))
+  expect_true(all(!diag_site$severed[diag_site$category %in% c(
+    "repeated_subject_samples", "subject_cross_study_overlap", "subject_cross_site_overlap"
+  )]))
+
+  # 3. Incomplete coverage: NA when <= 1 affected sample is covered without observed split;
+  # FALSE when observed assignments already split the covered affected samples.
+  con_one_sample <- derive_split_constraints(g_site, "subject", samples = c("s1", "s3"))
+  diag_incomplete <- as.data.frame(summarize_leakage_risks(g_site, constraint = con_one_sample))
+  expect_true(all(is.na(diag_incomplete$severed[diag_incomplete$category == "repeated_subject_samples"])))
+
+  con_split_sub <- derive_split_constraints(g_d08, "subject", samples = c("s1", "s2"))
+  diag_split_sub <- as.data.frame(summarize_leakage_risks(g_d08, constraint = con_split_sub))
+  expect_identical(diag_split_sub$severed[diag_split_sub$category == "repeated_subject_samples"], FALSE)
+
+  # 4. Explicit subset validation evaluates issues on that subset (s2, s3 share p2; s4 is p3 -> 2 groups, severed = TRUE)
+  g_sub_ok <- add_edges(
+    graph_from_metadata(
+      data.frame(
+        sample_id = c("s1", "s2", "s3", "s4"),
+        subject_id = c("p1", "p2", "p2", "p3"),
+        stringsAsFactors = FALSE
+      ),
+      validation_overrides = list(allow_multi_subject_samples = TRUE)
+    ),
+    edge
+  )
+  con_sub_ok <- derive_split_constraints(g_sub_ok, "subject", samples = c("s2", "s3", "s4"))
+  val_sub_ok <- validate_graph(subset_graph(g_sub_ok, samples = c("s2", "s3", "s4"), validate = FALSE))
+  diag_sub_ok <- as.data.frame(summarize_leakage_risks(g_sub_ok, constraint = con_sub_ok, validation = val_sub_ok))
+  expect_identical(diag_sub_ok$severed[diag_sub_ok$category == "repeated_subject_samples"], TRUE)
+  cmp_sub_ok <- as.data.frame(compare_split_constraints(g_sub_ok, modes = "subject", samples = c("s2", "s3", "s4"), k = 2L))
+  expect_identical(cmp_sub_ok$n_risks_severed, 1L)
+  expect_identical(cmp_sub_ok$n_risks_remaining, 0L)
+})
+
+test_that("B09 / D01: unlinked singleton keys never collide with linked entity keys", {
+  g_d01 <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2"),
+    subject_id = c(NA_character_, "unlinked:s1"),
+    stringsAsFactors = FALSE
+  ))
+  con_d01 <- derive_split_constraints(g_d01, "subject")
+  gv_d01 <- grouping_vector(con_d01)
+  expect_identical(length(unique(gv_d01)), 2L)
+  expect_identical(con_d01$metadata$n_groups, 2L)
+  expect_identical(length(unique(con_d01$sample_map$group_label)), 2L)
+
+  # Collision with label prefix "unlinked_s1" is also disambiguated
+  g_d01_lbl <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2"),
+    subject_id = c(NA_character_, "unlinked_s1"),
+    stringsAsFactors = FALSE
+  ))
+  con_d01_lbl <- derive_split_constraints(g_d01_lbl, "subject")
+  expect_identical(length(unique(con_d01_lbl$sample_map$group_id)), 2L)
+  expect_identical(length(unique(con_d01_lbl$sample_map$group_label)), 2L)
+
+  # Rule-based composite mode disambiguates unlinked singletons too
+  con_comp <- derive_split_constraints(g_d01, mode = "composite", strategy = "rule_based", via = "subject")
+  expect_identical(length(unique(con_comp$sample_map$group_id)), 2L)
+
+  # Ordinary unlinked samples preserve the standard "subject:unlinked:<sample_id>" key
+  g_ordinary <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2"),
+    subject_id = c("p1", NA_character_),
+    stringsAsFactors = FALSE
+  ))
+  con_ordinary <- derive_split_constraints(g_ordinary, "subject")
+  expect_identical(
+    con_ordinary$sample_map$group_id[con_ordinary$sample_map$sample_id == "s2"],
+    "subject:unlinked:s2"
+  )
+
+  # JSON round-trip preserves distinct groups
+  if (requireNamespace("jsonlite", quietly = TRUE)) {
+    spec_d01 <- as_split_spec(con_d01, graph = g_d01)
+    tmp <- tempfile(fileext = ".json")
+    on.exit(unlink(tmp), add = TRUE)
+    write_split_spec(spec_d01, tmp)
+    spec_rt <- read_split_spec(tmp, validate = TRUE)
+    expect_identical(length(unique(spec_rt$sample_data$group_id)), 2L)
+  }
+})
+
+test_that("B12 / D02: double-precision time_index values are preserved without character round-trip collapse", {
+  near <- c(1, 1 + 2 * .Machine$double.eps)
+  expect_identical(length(unique(near)), 2L)
+
+  g_d02 <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2", "s3", "s4"),
+    subject_id = c("p1", "p1", "p2", "p2"),
+    timepoint_id = c("a", "b", "a", "c_na"),
+    time_index = c(near, near[1], NA_real_),
+    stringsAsFactors = FALSE
+  ))
+  val_d02 <- validate_graph(g_d02)
+  expect_false("non_unique_subject_timepoints" %in% val_d02$issues$code)
+
+  con_d02 <- derive_split_constraints(g_d02, "time")
+  expect_identical(con_d02$sample_map$order_rank, c(1L, 2L, 1L, NA_integer_))
+  expect_identical(con_d02$sample_map$time_index, c(near, near[1], NA_real_))
+
+  # Character numeric strings remain supported
+  g_chr <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2"),
+    timepoint_id = c("t1", "t2"),
+    time_index = c("1.25", "2.5"),
+    stringsAsFactors = FALSE
+  ))
+  con_chr <- derive_split_constraints(g_chr, "time")
+  expect_identical(con_chr$sample_map$order_rank, c(1L, 2L))
+  expect_identical(con_chr$sample_map$time_index, c(1.25, 2.5))
+
+  # Nonfinite time_index values (Inf, -Inf, NaN) emit invalid_time_index warning and become NA
+  g_nonfinite <- graph_from_metadata(data.frame(
+    sample_id = c("s1", "s2", "s3", "s4"),
+    timepoint_id = c("t1", "t2", "t3", "t4"),
+    time_index = c(1, Inf, -Inf, NaN),
+    stringsAsFactors = FALSE
+  ))
+  val_nf <- validate_graph(g_nonfinite)
+  expect_identical(sum(val_nf$issues$code == "invalid_time_index"), 3L)
+  con_nf <- derive_split_constraints(g_nonfinite, "time")
+  expect_identical(con_nf$sample_map$order_rank, c(1L, NA_integer_, NA_integer_, NA_integer_))
+  expect_identical(con_nf$sample_map$time_index, c(1, NA_real_, NA_real_, NA_real_))
+
+  # JSON round-trip preserves closely spaced double precision
+  if (requireNamespace("jsonlite", quietly = TRUE)) {
+    g_near <- graph_from_metadata(data.frame(
+      sample_id = c("s1", "s2"),
+      timepoint_id = c("a", "b"),
+      time_index = near,
+      stringsAsFactors = FALSE
+    ))
+    fg <- tempfile(fileext = ".json")
+    fs <- tempfile(fileext = ".json")
+    on.exit(unlink(c(fg, fs)), add = TRUE)
+    write_dependency_graph(g_near, fg)
+    g_near_rt <- read_dependency_graph(fg, validate = TRUE)
+    expect_identical(derive_split_constraints(g_near_rt, "time")$sample_map$order_rank, c(1L, 2L))
+
+    spec_near <- as_split_spec(derive_split_constraints(g_near, "time"), graph = g_near)
+    write_split_spec(spec_near, fs)
+    spec_near_rt <- read_split_spec(fs, validate = TRUE)
+    expect_identical(spec_near_rt$sample_data$time_index, near)
+    expect_identical(spec_near_rt$sample_data$order_rank, c(1L, 2L))
+  }
+})
+
+test_that("B03 & B15 (D09, D10, D11): Python SplitSpec enforces forward-split contract and schema_version validation", {
+  skip_on_cran()
+  py <- ""
+  for (name in c("python3", "python")) {
+    candidate <- Sys.which(name)
+    if (!nzchar(candidate)) next
+    probe <- tryCatch(
+      suppressWarnings(system2(
+        candidate, c("-c", shQuote("import sys; print(sys.version_info[0])")),
+        stdout = TRUE, stderr = TRUE
+      )),
+      error = function(e) character()
+    )
+    if (is.null(attr(probe, "status")) && any(trimws(probe) == "3")) {
+      py <- candidate
+      break
+    }
+  }
+  skip_if(!nzchar(py), "python3 not available")
+
+  py_dir <- system.file("python", package = "splitGraph", mustWork = TRUE)
+  py_script <- tempfile(fileext = ".py")
+  on.exit(unlink(py_script), add = TRUE)
+  writeLines(c(
+    sprintf("import sys; sys.path.insert(0, %s)", shQuote(py_dir)),
+    "from splitspec.reader import SplitSpec",
+    "",
+    "def expect_val_err(fn, substr=None):",
+    "    try:",
+    "        fn()",
+    "    except ValueError as exc:",
+    "        if substr is not None:",
+    "            assert substr in str(exc), f'Expected {substr!r} in {str(exc)!r}'",
+    "        return",
+    "    raise AssertionError('Expected ValueError')",
+    "",
+    "# 1. Original two-rank rejection with n_splits=2",
+    "two_rank = SplitSpec({",
+    "    'splitGraph_object': 'split_spec', 'schema_version': '0.3.0',",
+    "    'group_var': 'group_id', 'time_var': 'order_rank',",
+    "    'ordering_required': True, 'recommended_resampling': 'forward',",
+    "    'sample_data': [",
+    "        {'sample_id': 's1', 'group_id': 'g1', 'order_rank': 1},",
+    "        {'sample_id': 's2', 'group_id': 'g2', 'order_rank': 2},",
+    "    ],",
+    "})",
+    "expect_val_err(lambda: list(two_rank.iter_splits(n_splits=2)), 'distinct order_rank')",
+    "",
+    "# 2. Valid recurring-subject longitudinal panel (12 rows, 4 subjects x 3 timepoints)",
+    "panel_rows = []",
+    "for p in range(1, 5):",
+    "    for t in range(1, 4):",
+    "        panel_rows.append({",
+    "            'sample_id': f'S{(p-1)*3+t}',",
+    "            'group_id': f'subject:P{p}',",
+    "            'order_rank': t,",
+    "        })",
+    "panel = SplitSpec({",
+    "    'splitGraph_object': 'split_spec', 'schema_version': '0.3.0',",
+    "    'group_var': 'group_id', 'time_var': 'order_rank',",
+    "    'ordering_required': True, 'recommended_resampling': 'forward',",
+    "    'sample_data': panel_rows,",
+    "})",
+    "splits = list(panel.iter_splits(n_splits=2, purge_ranks=0))",
+    "assert splits == [([3, 9], [1, 7]), ([0, 1, 6, 7], [5, 11])]",
+    "",
+    "# 3. D10a: One-group panel that empties training",
+    "one_grp = SplitSpec({",
+    "    'splitGraph_object': 'split_spec', 'schema_version': '0.3.0',",
+    "    'group_var': 'group_id', 'time_var': 'order_rank',",
+    "    'ordering_required': True, 'recommended_resampling': 'forward',",
+    "    'sample_data': [",
+    "        {'sample_id': f's{i}', 'group_id': 'subject:p1', 'order_rank': i}",
+    "        for i in (1, 2, 3)",
+    "    ],",
+    "})",
+    "expect_val_err(lambda: list(one_grp.iter_splits(n_splits=2)), 'empty training set')",
+    "",
+    "# 4. D10b: Fallback empties test window on split 3 of 3; zero partial splits emitted",
+    "late_fail = SplitSpec({",
+    "    'splitGraph_object': 'split_spec', 'schema_version': '0.3.0',",
+    "    'group_var': 'group_id', 'time_var': 'order_rank',",
+    "    'ordering_required': True, 'recommended_resampling': 'forward',",
+    "    'sample_data': [",
+    "        {'sample_id': f's{i}', 'group_id': g, 'order_rank': r}",
+    "        for i, (g, r) in enumerate(zip(['subject:p1'] * 4 + ['subject:p2'] * 4, [1, 2, 3, 4] * 2))",
+    "    ],",
+    "})",
+    "emitted = []",
+    "def consume_late():",
+    "    for item in late_fail.iter_splits(n_splits=3):",
+    "        emitted.append(item)",
+    "expect_val_err(consume_late, 'Forward split 3/3')",
+    "assert emitted == [], f'Expected no partial splits, got {emitted}'",
+    "",
+    "# 5. D09: Invalid n_splits and purge_ranks (including booleans and negative values)",
+    "for bad_n in (1, 0, -2, True, False, 2.5, '2'):",
+    "    expect_val_err(lambda n=bad_n: list(panel.iter_splits(n_splits=n)), 'n_splits')",
+    "for bad_p in (-1, -0.5, True, False, float('inf'), float('nan'), '0'):",
+    "    expect_val_err(lambda p=bad_p: list(panel.iter_splits(n_splits=2, purge_ranks=p)), 'purge_ranks')",
+    "",
+    "# 6. Missing or unusable group/rank values",
+    "bad_rank = SplitSpec({",
+    "    'splitGraph_object': 'split_spec', 'schema_version': '0.3.0',",
+    "    'group_var': 'group_id', 'time_var': 'order_rank',",
+    "    'ordering_required': True, 'recommended_resampling': 'forward',",
+    "    'sample_data': [",
+    "        {'sample_id': 's1', 'group_id': 'g1', 'order_rank': True},",
+    "        {'sample_id': 's2', 'group_id': 'g2', 'order_rank': 2},",
+    "        {'sample_id': 's3', 'group_id': 'g3', 'order_rank': 3},",
+    "    ],",
+    "})",
+    "expect_val_err(lambda: list(bad_rank.iter_splits(n_splits=2)), 'order ranks')",
+    "",
+    "# 7. D11: Missing or malformed schema_version rejected; valid older 0.1.0 / 0.2.0 accepted",
+    "for bad_v in (None, 3, '', '0.3', 'v0.3.0'):",
+    "    payload = {'splitGraph_object': 'split_spec', 'group_var': 'group_id', 'sample_data': []}",
+    "    if bad_v is not None:",
+    "        payload['schema_version'] = bad_v",
+    "    expect_val_err(lambda p=payload: SplitSpec(p), 'schema_version')",
+    "expect_val_err(lambda: SplitSpec({'splitGraph_object': 'split_spec', 'schema_version': '1.0.0', 'group_var': 'group_id', 'sample_data': []}), 'major version')",
+    "for ok_v in ('0.1.0', '0.2.0', '0.3.0'):",
+    "    s_ok = SplitSpec({'splitGraph_object': 'split_spec', 'schema_version': ok_v, 'group_var': 'group_id', 'sample_data': []})",
+    "    assert s_ok.schema_version == ok_v",
+    "print('PYTHON_CONTRACT_OK')"
+  ), py_script)
+
+  out <- system2(py, c("-B", shQuote(py_script)), stdout = TRUE, stderr = TRUE)
+  expect_identical(tail(out, 1L), "PYTHON_CONTRACT_OK")
 })

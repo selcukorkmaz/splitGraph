@@ -3,7 +3,7 @@
 # Build a helpful error message when edge endpoints don't match any node ID.
 # If the missing references look like prefixed IDs (e.g. "sample:S1") while
 # the node table uses unprefixed keys (or vice versa), point at that as a
-# likely cause — this is the most common first-time-user mistake.
+# likely cause -- this is the most common first-time-user mistake.
 .depgraph_missing_reference_message <- function(missing, node_ids, side) {
   base_msg <- paste0(
     "Edge data contains `", side, "` references that are not present in the node table: ",

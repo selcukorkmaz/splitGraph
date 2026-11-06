@@ -1,19 +1,37 @@
 """Reader for the splitGraph ``split_spec`` JSON interchange format."""
 
 import json
+import math
+import re
 
 # Schema major versions this reader understands. The major component is the
 # compatibility boundary, mirroring the R side's policy.
 _SUPPORTED_MAJORS = {0}
+_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 def _major(version):
-    if not version:
+    if not isinstance(version, str) or not _VERSION_RE.match(version):
         return None
-    try:
-        return int(str(version).split(".")[0])
-    except (ValueError, IndexError):
-        return None
+    return int(version.split(".")[0])
+
+
+def _is_usable_group(value):
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (int, float)):
+        return math.isfinite(value)
+    return False
+
+
+def _is_usable_rank(value):
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
 
 
 class SplitSpec:
@@ -24,6 +42,8 @@ class SplitSpec:
     """
 
     def __init__(self, data):
+        if not isinstance(data, dict):
+            raise ValueError("split_spec payload must be a JSON object (dict).")
         obj = data.get("splitGraph_object")
         if obj != "split_spec":
             raise ValueError(
@@ -32,7 +52,12 @@ class SplitSpec:
 
         self.schema_version = data.get("schema_version")
         major = _major(self.schema_version)
-        if major is not None and major not in _SUPPORTED_MAJORS:
+        if major is None:
+            raise ValueError(
+                "Invalid or missing split_spec schema_version %r; expected a "
+                "'X.Y.Z' version string." % (self.schema_version,)
+            )
+        if major not in _SUPPORTED_MAJORS:
             raise ValueError(
                 "Unsupported split_spec schema major version %r (this reader "
                 "supports majors %s)." % (self.schema_version, sorted(_SUPPORTED_MAJORS))
@@ -106,25 +131,55 @@ class SplitSpec:
         return with_rank + without_rank
 
     def iter_splits(self, n_splits=5, purge_ranks=0):
-        """Yield ``(train_idx, test_idx)`` index pairs using only the Python stdlib.
+        """Return an iterator of ``(train_idx, test_idx)`` index pairs using only the Python stdlib.
 
-        * When ``ordering_required`` is ``True``, yields ``n_splits`` expanding-window
-          (forward-chaining) splits ordered by :meth:`order_ranks`, purging any
-          training sample within ``purge_ranks`` of the test window or sharing a
-          ``group_var`` with a test sample.
+        * ``n_splits`` must be an integer ``>= 2`` and ``purge_ranks`` must be a
+          finite, nonnegative number in ``order_rank`` units.
+        * When ``ordering_required`` is ``True``, constructs ``n_splits``
+          expanding-window (forward-chaining) splits ordered by :meth:`order_ranks`,
+          purging any training sample with ``rank >= min(test_rank) - purge_ranks``
+          or sharing a ``group_var`` value with a test sample. When recurring
+          groups span both past and future windows so purging all test-window
+          groups would empty the training set, a longitudinal panel fallback
+          partitions distinct groups across folds for that window; this fallback
+          narrows the test window to the held-out group subset and can reduce
+          overall test coverage. All ``n_splits`` splits are validated (nonempty
+          train and test sets, disjoint row indices and groups, and strict rank
+          separation with the requested purge gap) before any split is emitted.
         * Otherwise, partitions distinct groups from :meth:`groups` into ``n_splits``
-          size-balanced folds (stratified by :meth:`strata` when ``stratum_var`` is
-          present and complete) so no group straddles train and test.
+          size-balanced folds (using each group's first row's :meth:`strata` value
+          when ``stratum_var`` is present and complete) so no group straddles
+          train and test.
         """
-        if n_splits < 2:
-            raise ValueError("n_splits must be >= 2.")
+        if isinstance(n_splits, bool) or not isinstance(n_splits, int) or n_splits < 2:
+            raise ValueError(
+                f"n_splits must be an integer >= 2 (got {n_splits!r})."
+            )
+        if (
+            isinstance(purge_ranks, bool)
+            or not isinstance(purge_ranks, (int, float))
+            or not math.isfinite(purge_ranks)
+            or purge_ranks < 0
+        ):
+            raise ValueError(
+                f"purge_ranks must be a finite, nonnegative number in order_rank units (got {purge_ranks!r})."
+            )
+
         n = len(self.sample_data)
+        if n == 0:
+            raise ValueError("Cannot generate splits from an empty sample_data table.")
         groups = self.groups()
+        if any(not _is_usable_group(g) for g in groups):
+            raise ValueError(
+                f"All samples must have a non-empty, usable group assignment in {self.group_var!r}."
+            )
 
         if self.ordering_required:
             ranks = self.order_ranks()
-            if any(r is None for r in ranks):
-                raise ValueError("ordering_required is True but some samples are missing order ranks.")
+            if any(not _is_usable_rank(r) for r in ranks):
+                raise ValueError(
+                    "ordering_required is True but some samples are missing or have invalid order ranks."
+                )
             unique_ranks = sorted(set(ranks))
             if len(unique_ranks) < n_splits + 1:
                 raise ValueError(
@@ -132,16 +187,18 @@ class SplitSpec:
                 )
             # Partition unique_ranks into (n_splits + 1) blocks; block 0 is initial history.
             block_size = len(unique_ranks) / float(n_splits + 1)
-            distinct_groups = sorted({g for g in groups if g is not None})
+            distinct_groups = sorted(set(groups), key=str)
+            splits = []
             for k in range(1, n_splits + 1):
                 start_idx = int(round(k * block_size))
                 end_idx = int(round((k + 1) * block_size)) if k < n_splits else len(unique_ranks)
                 if start_idx >= end_idx:
                     start_idx = max(1, end_idx - 1)
-                test_rank_set = set(unique_ranks[start_idx:end_idx])
+                test_rank_list = unique_ranks[start_idx:end_idx]
+                test_rank_set = set(test_rank_list)
                 min_test_rank = min(test_rank_set)
                 test_idx = [i for i, r in enumerate(ranks) if r in test_rank_set]
-                test_groups = {groups[i] for i in test_idx if groups[i] is not None}
+                test_groups = {groups[i] for i in test_idx}
                 train_idx = [
                     i for i, r in enumerate(ranks)
                     if r < (min_test_rank - purge_ranks) and groups[i] not in test_groups
@@ -151,22 +208,57 @@ class SplitSpec:
                 # empties the training set, partition groups across folds so
                 # fold (k-1)'s groups form the future test set and the remaining
                 # groups form the past training set.
+                used_fallback = False
                 if not train_idx and len(distinct_groups) >= 2:
+                    used_fallback = True
                     fold_idx = (k - 1) % n_splits
                     held_out_groups = {
-                        g for gi, g in enumerate(distinct_groups) if gi % min(n_splits, len(distinct_groups)) == fold_idx
+                        g for gi, g in enumerate(distinct_groups) if gi % n_splits == fold_idx
                     }
                     test_idx = [
                         i for i, r in enumerate(ranks)
                         if r in test_rank_set and groups[i] in held_out_groups
                     ]
-                    test_groups = {groups[i] for i in test_idx if groups[i] is not None}
+                    test_groups = {groups[i] for i in test_idx}
+                    if test_idx:
+                        min_test_rank = min(ranks[i] for i in test_idx)
                     train_idx = [
                         i for i, r in enumerate(ranks)
                         if r < (min_test_rank - purge_ranks) and groups[i] not in test_groups
                     ]
-                yield (train_idx, test_idx)
-            return
+
+                if not test_idx:
+                    if used_fallback:
+                        raise ValueError(
+                            f"Forward split {k}/{n_splits} (test ranks {test_rank_list}) produced an empty test set "
+                            f"under the longitudinal panel fallback ({len(distinct_groups)} distinct groups available for n_splits={n_splits})."
+                        )
+                    raise ValueError(
+                        f"Forward split {k}/{n_splits} (test ranks {test_rank_list}) produced an empty test set."
+                    )
+                if not train_idx:
+                    raise ValueError(
+                        f"Forward split {k}/{n_splits} (test ranks {test_rank_list}, purge_ranks={purge_ranks}) "
+                        f"produced an empty training set after enforcing group disjointness and rank purging."
+                    )
+                if not set(train_idx).isdisjoint(test_idx):
+                    raise ValueError(
+                        f"Forward split {k}/{n_splits} (test ranks {test_rank_list}) has overlapping train and test row indices."
+                    )
+                train_groups = {groups[i] for i in train_idx}
+                if not train_groups.isdisjoint(test_groups):
+                    raise ValueError(
+                        f"Forward split {k}/{n_splits} (test ranks {test_rank_list}) has overlapping train and test groups."
+                    )
+                max_train_rank = max(ranks[i] for i in train_idx)
+                actual_min_test_rank = min(ranks[i] for i in test_idx)
+                if not (max_train_rank < actual_min_test_rank and max_train_rank < (actual_min_test_rank - purge_ranks)):
+                    raise ValueError(
+                        f"Forward split {k}/{n_splits} (test ranks {test_rank_list}, purge_ranks={purge_ranks}) "
+                        f"violated temporal rank separation (max train rank {max_train_rank}, min test rank {actual_min_test_rank})."
+                    )
+                splits.append((train_idx, test_idx))
+            return iter(splits)
 
         # Grouped (and optionally stratified) K-fold using deterministic LPT balancing.
         group_to_indices = {}
@@ -180,7 +272,7 @@ class SplitSpec:
         strata = self.strata() if self.stratum_var else [None] * n
         use_strata = self.stratum_var is not None and all(s is not None for s in strata)
 
-        # Sort groups by dominant stratum (if available), then by descending size, then group id.
+        # Sort groups by first-row stratum (if available), then by descending size, then group id.
         def _group_sort_key(item):
             g, idxs = item
             dom_s = str(strata[idxs[0]]) if use_strata else ""
@@ -204,11 +296,13 @@ class SplitSpec:
             fold_bins[best_f].extend(idxs)
             fold_sizes[best_f] += len(idxs)
 
+        splits = []
         for f in range(n_splits):
             test_idx = sorted(fold_bins[f])
             test_set = set(test_idx)
             train_idx = [i for i in range(n) if i not in test_set]
-            yield (train_idx, test_idx)
+            splits.append((train_idx, test_idx))
+        return iter(splits)
 
     # ---- pandas / scikit-learn convenience (optional deps) ------------------
 

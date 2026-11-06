@@ -131,7 +131,19 @@
   )
   row.names(out) <- NULL
   attr(out, "multi_assignment_samples") <- multi_assignment_samples
+  attr(out, "target_keys") <- node_data$node_key[node_data$node_type == target_type]
   out
+}
+
+.depgraph_unlinked_tag <- function(existing_keys) {
+  keys <- as.character(stats::na.omit(existing_keys))
+  tag <- "unlinked"
+  idx <- 1L
+  while (any(startsWith(keys, paste0(tag, ":")) | startsWith(keys, paste0(tag, "_")) | keys == tag)) {
+    tag <- paste0("unlinked_", idx)
+    idx <- idx + 1L
+  }
+  tag
 }
 
 .depgraph_warning_if_missing <- function(assignments, mode) {
@@ -152,6 +164,10 @@
 
   linked <- !is.na(assignments$linked_node_id) & nzchar(assignments$linked_node_id)
   linked[is.na(linked)] <- FALSE
+  unlinked_tag <- .depgraph_unlinked_tag(c(
+    assignments$linked_key,
+    attr(assignments, "target_keys", exact = TRUE)
+  ))
 
   out <- data.frame(
     sample_id = assignments$sample_id,
@@ -159,10 +175,10 @@
     group_id = ifelse(
       linked,
       paste0(mode, ":", assignments$linked_key),
-      paste0(mode, ":unlinked:", assignments$sample_id)
+      paste0(mode, ":", unlinked_tag, ":", assignments$sample_id)
     ),
     constraint_type = mode,
-    group_label = ifelse(linked, assignments$linked_key, paste0("unlinked_", assignments$sample_id)),
+    group_label = ifelse(linked, assignments$linked_key, paste0(unlinked_tag, "_", assignments$sample_id)),
     explanation = ifelse(
       linked,
       paste0(prefix, " through ", assignments$edge_type, " -> ", assignments$linked_key, "."),
@@ -180,10 +196,8 @@
     time_nodes$attrs,
     function(x) {
       value <- .depgraph_extract_attr(x, "time_index")
-      if (length(value) == 0L || is.na(value)) {
-        return(NA_real_)
-      }
-      suppressWarnings(as.numeric(as.character(value)))
+      parsed <- .depgraph_parse_time_index(value)
+      if (length(parsed) == 0L) NA_real_ else parsed[[1L]]
     },
     FUN.VALUE = numeric(1)
   )
@@ -228,8 +242,7 @@
 
   if (all(!is.na(raw_time_index))) {
     unique_order <- sort(unique(raw_time_index))
-    rank_map <- stats::setNames(seq_along(unique_order), as.character(unique_order))
-    order_rank <- as.integer(rank_map[as.character(raw_time_index)])
+    order_rank <- as.integer(match(raw_time_index, unique_order))
     names(order_rank) <- time_node_ids
     return(list(
       source = "time_index",
@@ -281,8 +294,7 @@
 
   if (any(!is.na(raw_time_index))) {
     available <- sort(unique(raw_time_index[!is.na(raw_time_index)]))
-    rank_map <- stats::setNames(seq_along(available), as.character(available))
-    order_rank[!is.na(raw_time_index)] <- as.integer(rank_map[as.character(raw_time_index[!is.na(raw_time_index)])])
+    order_rank[!is.na(raw_time_index)] <- as.integer(match(raw_time_index[!is.na(raw_time_index)], available))
     warnings <- c(warnings, "Time ordering is only partially available because some timepoints are missing `time_index` values.")
   } else if (nrow(precedence_edges) == 0L) {
     warnings <- c(warnings, "Time ordering is unavailable because neither `time_index` metadata nor usable `timepoint_precedes` edges were found.")
@@ -680,16 +692,20 @@
   time_info <- if ("time" %in% priority) .derive_time_constraints(graph, samples = sample_ids)$sample_map else NULL
   time_idx <- if (is.null(time_info)) rep(NA_integer_, n) else match(sample_ids, time_info$sample_node_id)
 
+  unlinked_tag <- .depgraph_unlinked_tag(c(
+    chosen_key,
+    graph$nodes$data$node_key[graph$nodes$data$node_type != "Sample"]
+  ))
   sample_map <- data.frame(
     sample_id = sample_nodes$node_key,
     sample_node_id = sample_ids,
     group_id = ifelse(
       has_mode,
       paste0("composite_", chosen_mode, ":", chosen_key),
-      paste0("composite:unlinked:", sample_nodes$node_key)
+      paste0("composite:", unlinked_tag, ":", sample_nodes$node_key)
     ),
     constraint_type = ifelse(has_mode, chosen_mode, "unlinked"),
-    group_label = ifelse(has_mode, chosen_key, paste0("unlinked_", sample_nodes$node_key)),
+    group_label = ifelse(has_mode, chosen_key, paste0(unlinked_tag, "_", sample_nodes$node_key)),
     explanation = ifelse(
       has_mode,
       paste0(

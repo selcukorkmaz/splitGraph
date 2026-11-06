@@ -312,6 +312,7 @@ write_dependency_graph <- function(graph, path, pretty = TRUE) {
     auto_unbox = TRUE,
     null = "null",
     na = "null",
+    digits = 17,
     pretty = isTRUE(pretty)
   )
   writeLines(json, path)
@@ -451,7 +452,7 @@ read_dependency_graph <- function(path, validate = FALSE) {
   if (is.null(meta_list) || length(meta_list) == 0L) return(list())
   out <- as.list(meta_list)
   # warnings/relations_used/enrichment_warnings are character vectors;
-  # jsonlite keeps them as lists when simplifyVector = FALSE — coerce back.
+  # jsonlite keeps them as lists when simplifyVector = FALSE -- coerce back.
   for (k in .depgraph_split_spec_vector_fields) {
     if (!is.null(out[[k]])) {
       out[[k]] <- as.character(unlist(out[[k]]))
@@ -560,6 +561,7 @@ write_split_spec <- function(spec, path, pretty = TRUE) {
     auto_unbox = TRUE,
     null = "null",
     na = "null",
+    digits = 17,
     pretty = isTRUE(pretty)
   )
   writeLines(json, path)

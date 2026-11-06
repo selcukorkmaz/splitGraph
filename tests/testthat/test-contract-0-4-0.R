@@ -175,7 +175,7 @@ test_that("a subject collected at several sites raises subject_cross_site_overla
   expect_identical(hit$severity, "warning")
   expect_true(all(c("subject:P1", "sample:S1", "sample:S2", "site:NYC", "site:BOS") %in% hit$node_ids[[1]]))
 
-  # Severed by subject, relatedness, or strict composite covering subject — NOT by site grouping alone.
+  # Severed by subject, relatedness, or strict composite covering subject -- NOT by site grouping alone.
   risks_subject <- as.data.frame(summarize_leakage_risks(g, constraint = derive_split_constraints(g, "subject")))
   risks_site <- as.data.frame(summarize_leakage_risks(g, constraint = derive_split_constraints(g, "site")))
   risks_comp <- as.data.frame(summarize_leakage_risks(g, constraint = derive_split_constraints(g, "composite", via = c("subject", "site"))))

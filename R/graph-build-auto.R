@@ -230,7 +230,7 @@ graph_from_metadata.data.frame <- function(meta,
   has_timepoint <- "timepoint_id" %in% names(meta) &&
     any(!is.na(meta$timepoint_id) & nzchar(as.character(meta$timepoint_id)))
   if (isTRUE(time_precedence) && has_timepoint && "time_index" %in% names(meta)) {
-    num_time_index <- suppressWarnings(as.numeric(as.character(meta$time_index)))
+    num_time_index <- .depgraph_parse_time_index(meta$time_index)
     tp_rows <- !is.na(meta$timepoint_id) & nzchar(as.character(meta$timepoint_id)) &
       !is.na(num_time_index)
     if (any(tp_rows)) {

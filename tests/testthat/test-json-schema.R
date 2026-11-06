@@ -372,3 +372,30 @@ test_that("a 0.2.0 split_spec (no stratum) loads silently and migrates to 0.3.0"
   expect_true(grepl("/0.3.0/", migrated[["$schema"]], fixed = TRUE))
   expect_true("stratum" %in% names(migrated$sample_data[[1]]))
 })
+
+test_that("B15 / D04: validate_split_spec_json and validate_graph_json reject non-string metadata array elements and invalid metadata fields", {
+  skip_if_not_installed("jsonlite")
+  f_d04 <- tempfile(fileext = ".json")
+  on.exit(unlink(f_d04), add = TRUE)
+  writeLines(
+    '{"splitGraph_object":"split_spec","schema_version":"0.3.0","group_var":"group_id","metadata":{"via":[5],"n_samples":"two","enriched_from_graph":"yes"},"sample_data":[{"sample_id":"s","group_id":"g","order_rank":1}]}',
+    f_d04
+  )
+  rep_d04 <- validate_split_spec_json(f_d04)
+  expect_false(rep_d04$valid)
+  expect_true(any(grepl("metadata\\.via must be an array of strings", rep_d04$issues)))
+  expect_true(any(grepl("metadata\\.n_samples must be an integer or null", rep_d04$issues)))
+  expect_true(any(grepl("metadata\\.enriched_from_graph must be a boolean or null", rep_d04$issues)))
+
+  f_graph <- tempfile(fileext = ".json")
+  on.exit(unlink(f_graph), add = TRUE)
+  writeLines(
+    '{"splitGraph_object":"dependency_graph","schema_version":"0.3.0","metadata":{"edge_sources":{"subject_related_to":{"relation":5,"threshold":"high"}}},"nodes":[{"node_id":"sample:s1","node_type":"Sample","node_key":"s1","label":123}],"edges":[]}',
+    f_graph
+  )
+  rep_g <- validate_graph_json(f_graph)
+  expect_false(rep_g$valid)
+  expect_true(any(grepl("metadata\\.edge_sources\\.subject_related_to\\.relation must be a string", rep_g$issues)))
+  expect_true(any(grepl("metadata\\.edge_sources\\.subject_related_to\\.threshold must be a number or null", rep_g$issues)))
+  expect_true(any(grepl("node\\[1\\]: `label` must be a string or null", rep_g$issues)))
+})

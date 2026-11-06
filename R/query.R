@@ -568,7 +568,7 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
   path_idx <- 1L
   # Truncation tracking: TRUE whenever a returned path reaches the cap in
   # edges, which means longer simple paths between the same endpoints may
-  # have been suppressed. Conservative — never a false negative when a
+  # have been suppressed. Conservative -- never a false negative when a
   # finite cap was binding, may flag false positives (returned paths at the
   # boundary that happen to have no longer siblings).
   cap_binding <- (cutoff_value != -1L)

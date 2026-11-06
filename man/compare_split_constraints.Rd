@@ -53,7 +53,16 @@ modes on the same \code{dependency_graph} and returns a side-by-side table of
 group counts, largest-group concentration, effective group count (inverse
 Herfindahl--Hirschman index), $k$-fold feasibility, severed vs. remaining
 structural leakage warnings, and (when outcome strata are present) the
-minimum number of distinct groups per outcome stratum.
+minimum number of distinct groups per outcome stratum. Validation diagnostics
+whose severance is resolved (\code{TRUE} or \code{FALSE}) are counted in
+\code{n_risks_severed} and \code{n_risks_remaining}, while indeterminate
+(\code{NA}) diagnostics are excluded from both counts. When a constraint
+collapses all samples into a single group (\code{n_groups < 2}), must-links
+are preserved within that component (\code{severed = TRUE} in
+\code{summarize_leakage_risks()}), but \code{compare_split_constraints()}
+reports \code{n_risks_severed = 0L} and counts resolved risks in
+\code{n_risks_remaining} because a single group cannot form any nontrivial
+train/test split.
 }
 \details{
 \code{find_dependency_bridges()} identifies non-sample entity nodes (such as
