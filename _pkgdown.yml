@@ -62,6 +62,7 @@ reference:
     desc: Turn graph structure into deterministic split constraints.
     contents:
       - derive_split_constraints
+      - compare_split_constraints
       - pairwise_edges
   - title: Interchange
     desc: The tool-agnostic `split_spec`, JSON serialisation, schema validation, and migration.

@@ -313,19 +313,14 @@
 #'
 #' \tabular{lll}{
 #'   \strong{Consumer} \tab \strong{Reads} \tab \strong{Modes} \cr
-#'   bioLeak 0.3.8 \code{as_leaksplits()} \tab
+#'   bioLeak \code{as_leaksplits()} \tab
 #'     \code{sample_data} columns \code{sample_id}, the \code{group_var} column,
 #'     \code{batch_group}, \code{study_group}, \code{timepoint_id},
 #'     \code{order_rank}; fields \code{group_var}, \code{constraint_mode},
 #'     \code{time_var} \tab
-#'     subject, batch, study, time. Every other \code{constraint_mode}
-#'     currently \emph{errors} inside bioLeak: site, region, platform, assay,
-#'     relatedness and spatial are absent from its mode map ("subscript out of
-#'     bounds"), and composite maps to \code{make_split_plan(mode =
-#'     "combined")} without the \code{constraints} / \code{primary_axis} that
-#'     mode requires. Until that is fixed, join \code{group_id} onto your
-#'     observation frame and call \code{bioLeak::make_split_plan(group =
-#'     "group_id")} directly; the grouping is preserved. \cr
+#'     \code{subject}, \code{batch}, \code{study}, \code{time} on CRAN 0.3.8
+#'     (all 11 modes via \code{make_split_plan(group = spec$group_var)} or in
+#'     bioLeak > 0.3.8) \cr
 #'   Python \code{splitspec} reader (shipped) \tab
 #'     every field and column, including \code{stratum_var} / \code{stratum}
 #'     and the block columns \tab all \cr
@@ -333,12 +328,16 @@
 #'     \code{group_id} for \code{group_vfold_cv()}, \code{order_rank} for
 #'     \code{rolling_origin()}; block columns read for fold auditing \tab all \cr
 #' }
-#' Every row is pinned by a contract test (run when bioLeak is installed),
-#' including the workaround, so the seam cannot drift silently; the test fails
-#' deliberately when a bioLeak release starts accepting the other modes.
+#' Every row is pinned by a contract test (run when bioLeak is installed)
+#' so the seam cannot drift silently.
 #'
 #' @param constraint A \code{split_constraint}.
 #' @param graph A \code{dependency_graph}.
+#' @param stratify_by Optional stratification source when \code{graph} is
+#'   supplied: \code{"outcome"} (default, from \code{Outcome} nodes),
+#'   \code{"none"} (disable stratum annotation), or one of \code{"batch"},
+#'   \code{"study"}, \code{"site"}, \code{"region"}, \code{"platform"},
+#'   \code{"assay"}.
 #' @param split_spec An optional \code{split_spec}.
 #' @param validation An optional \code{depgraph_validation_report}.
 #' @param x A \code{split_spec}.
@@ -357,8 +356,15 @@
 #' validate_split_spec(spec)
 #' summarize_leakage_risks(g, constraint = constraint, split_spec = spec)
 #' @export
-as_split_spec <- function(constraint, graph = NULL) {
+as_split_spec <- function(constraint,
+                          graph = NULL,
+                          stratify_by = c("outcome", "none", "batch", "study", "site", "region", "platform", "assay")) {
   .depgraph_assert(inherits(constraint, "split_constraint"), "`constraint` must be a `split_constraint`.")
+  stratify_by <- .depgraph_match_arg(
+    stratify_by,
+    c("outcome", "none", "batch", "study", "site", "region", "platform", "assay"),
+    "stratify_by"
+  )
 
   sample_map <- constraint$sample_map
   sample_data <- .split_spec_sample_data_template(nrow(sample_map))
@@ -406,6 +412,12 @@ as_split_spec <- function(constraint, graph = NULL) {
     enrichment_warnings <- attr(sample_data, "enrichment_warnings", exact = TRUE) %||% character()
     attr(sample_data, "enrichment_warnings") <- NULL
     enrichment_used <- TRUE
+  }
+  if (identical(stratify_by, "none")) {
+    sample_data$stratum <- rep(NA_character_, nrow(sample_data))
+  } else if (!identical(stratify_by, "outcome")) {
+    strat_col <- paste0(stratify_by, "_group")
+    sample_data$stratum <- as.character(sample_data[[strat_col]])
   }
 
   block_vars <- c()
@@ -608,15 +620,33 @@ validate_split_spec <- function(x) {
 
 .depgraph_constraint_via_modes <- function(constraint) {
   # Constraints store composite `via` as capitalized node types
-  # (e.g., "Subject"); convert to lower-case mode names for severance lookup.
+  # (e.g., "Subject") or pairwise mode names ("relatedness", "spatial").
+  # Under `rule_based` strategy, each sample only uses its highest-priority
+  # available dependency, so a dependency channel is only structurally severed
+  # across the dataset if every sample was assigned via that single mode.
+  strategy <- as.character(constraint$metadata$strategy %||% constraint$strategy %||% "")
+  if (identical(strategy, "rule_based")) {
+    if (is.null(constraint$sample_map) || nrow(constraint$sample_map) == 0L) {
+      return(character())
+    }
+    ctypes <- unique(as.character(constraint$sample_map$constraint_type))
+    if (length(ctypes) == 1L && !is.na(ctypes) && nzchar(ctypes) && !identical(ctypes, "unlinked")) {
+      return(tolower(ctypes))
+    }
+    return(character())
+  }
+
   via <- constraint$metadata$via %||% character()
   if (length(via) == 0L) return(character())
   reverse <- stats::setNames(
     names(.depgraph_constraint_mode_map),
     unname(.depgraph_constraint_mode_map)
   )
-  matched <- reverse[as.character(via)]
-  unname(matched[!is.na(matched)])
+  via_chr <- as.character(via)
+  matched <- reverse[via_chr]
+  direct_modes <- tolower(via_chr[is.na(matched)])
+  direct_modes <- direct_modes[direct_modes %in% .depgraph_composable_modes()]
+  unique(c(unname(matched[!is.na(matched)]), direct_modes))
 }
 
 # Map a validation issue code to whether the chosen constraint mode (+ optional
@@ -627,19 +657,18 @@ validate_split_spec <- function(x) {
   if (is.null(mode) || !nzchar(mode)) return(NA)
   via_modes <- as.character(via_modes %||% character())
   composite_covers <- function(needed) {
-    identical(mode, "composite") && needed %in% via_modes
+    identical(mode, "composite") && any(needed %in% via_modes)
   }
+  subject_severed <- mode %in% c("subject", "relatedness") ||
+    composite_covers(c("subject", "relatedness"))
+
   switch(
     as.character(code),
-    repeated_subject_samples     = identical(mode, "subject") || composite_covers("subject"),
-    subject_cross_study_overlap  = mode %in% c("subject", "study") ||
-                                     composite_covers("subject") ||
-                                     composite_covers("study"),
-    subject_cross_site_overlap   = mode %in% c("subject", "site") ||
-                                     composite_covers("subject") ||
-                                     composite_covers("site"),
+    repeated_subject_samples     = subject_severed,
+    subject_cross_study_overlap  = subject_severed,
+    subject_cross_site_overlap   = subject_severed,
     heavy_batch_reuse            = identical(mode, "batch") || composite_covers("batch"),
-    missing_time_ordering        = identical(mode, "time") || composite_covers("time"),
+    missing_time_ordering        = FALSE,
     per_dataset_featureset       = FALSE,
     shared_featureset_provenance = FALSE,
     NA
@@ -661,11 +690,35 @@ validate_split_spec <- function(x) {
 
   mode <- if (!is.null(constraint)) as.character(constraint$metadata$mode %||% NA) else NA_character_
   via_modes <- if (!is.null(constraint)) .depgraph_constraint_via_modes(constraint) else character()
+  group_map <- if (!is.null(constraint) && !is.null(constraint$sample_map) &&
+                   all(c("sample_node_id", "group_id") %in% names(constraint$sample_map))) {
+    stats::setNames(
+      as.character(constraint$sample_map$group_id),
+      as.character(constraint$sample_map$sample_node_id)
+    )
+  } else {
+     NULL
+  }
 
   severed <- vapply(
-    validation$issues$code,
-    function(code) {
-      .leakage_severed_by_constraint(code, mode = if (is.na(mode)) NULL else mode, via_modes = via_modes)
+    seq_len(nrow(validation$issues)),
+    function(i) {
+      code <- as.character(validation$issues$code[[i]])
+      sem <- .leakage_severed_by_constraint(code, mode = if (is.na(mode)) NULL else mode, via_modes = via_modes)
+      if (!isFALSE(sem) || is.null(group_map)) {
+        return(sem)
+      }
+      if (code %in% c("repeated_subject_samples", "subject_cross_study_overlap", "subject_cross_site_overlap")) {
+        nids <- as.character(validation$issues$node_ids[[i]])
+        sample_nids <- nids[startsWith(nids, "sample:")]
+        if (length(sample_nids) >= 2L && all(sample_nids %in% names(group_map))) {
+          g_vals <- unname(group_map[sample_nids])
+          if (all(!is.na(g_vals) & nzchar(g_vals)) && length(unique(g_vals)) == 1L) {
+            return(TRUE)
+          }
+        }
+      }
+      sem
     },
     logical(1)
   )

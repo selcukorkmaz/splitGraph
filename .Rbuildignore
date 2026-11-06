@@ -23,6 +23,11 @@
 ^paper\.md$
 ^paper\.bib$
 ^paper-figures$
+^splitGraph_Layperson_Guide\.pdf$
+^splitGraph_in_action_GSE60424\.Rmd$
+^splitGraph_in_action_GSE60424\.html$
+^splitGraph_in_action_GSE60424_files$
+^jss-paper$
 ^codecov\.yml$
 ^CODE_OF_CONDUCT\.md$
 ^cran-comments\.md$

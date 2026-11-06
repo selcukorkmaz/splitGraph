@@ -1,3 +1,73 @@
+# splitGraph 0.5.0
+
+## Feasibility analysis, orthogonal ordering/stratification, and stabilization
+
+### Correctness & stabilization fixes
+
+- **Mode-aware leakage severance (`summarize_leakage_risks()`):** Fixed
+  `.leakage_severed_by_constraint()` and `.depgraph_constraint_via_modes()` so
+  `mode = "study"` and `mode = "site"` report `severed = FALSE` for
+  `subject_cross_study_overlap` and `subject_cross_site_overlap` (since
+  splitting by study or site places the same subject across multiple folds),
+  `mode = "relatedness"` and composite `via = "relatedness"` report
+  `severed = TRUE` for subject-level overlap codes
+  (`repeated_subject_samples`, `subject_cross_study_overlap`,
+  `subject_cross_site_overlap`), `strategy = "rule_based"` composite constraints
+  only mark a dependency channel as severed when all samples use that channel,
+  and `missing_time_ordering` reports `severed = FALSE`.
+- **Temporal precedence & transitive `time_index` validation
+  (`derive_split_constraints(mode = "time")`):** Added a topological consecutive-rank
+  Hamiltonian-path check so disconnected or partially ordered `timepoint_precedes`
+  DAGs without `time_index` warn and leave `order_rank` as `NA` instead of
+  silently fabricating arbitrary ranks; `.depgraph_time_order_consistency()` now
+  also checks full reachability for `time_index` inversions across intermediate
+  nodes with missing `time_index`.
+- **`graph_from_metadata()` hardening:** Fixed `time_precedence = TRUE` so
+  tied `time_index` values do not emit conflicting `timepoint_precedes` edges and
+  character `time_index` values are sorted numerically; restricted optional
+  node attributes to columns invariant within each entity key; validated
+  `outcome_scope = "subject"` when `subject_id` is absent or partially missing;
+  and added duplicate column-mapping detection in `ingest_metadata()`.
+- **Undirected pairwise canonicalization & graph editing:** `create_edges()` and
+  `.depgraph_dedupe_edges()` now canonicalize undirected `subject_related_to`
+  and `sample_adjacent_to` endpoints so symmetric duplicates `(A, B)` and `(B, A)`
+  are deduplicated; `combine_graphs()` merges compatible `NA` and non-`NA`
+  attributes in canonical key order; and `subset_graph()` no longer pulls
+  excluded subjects back via `subject_related_to` edges.
+- **Graph queries & JSON schema validation:** `query_neighbors()` now traverses
+  both endpoints of undirected pairwise edges regardless of `direction`;
+  `query_paths()` flags `truncated = TRUE` when `max_length` truncates search
+  even when zero paths are returned within the hop budget;
+  `detect_dependency_components()` supports full ontology (`Site`, `Region`,
+  `Platform`, `Assay`) and pairwise (`relatedness`, `spatial`) `via` targets;
+  and `validate_graph_json()` / `validate_split_spec_json()` safely report
+  schema issues on missing arrays or scalar array elements.
+- **Python `splitspec` reader:** Fixed `SplitSpec.order_ranks()` to read the
+  column named by `self.time_var` (falling back to `"order_rank"`).
+
+### New features
+
+- **Feasibility & sensitivity diagnostics (`compare_split_constraints()`,
+  `find_dependency_bridges()`):** Compare candidate constraint modes across
+  group counts, largest group share, inverse Herfindahl-Hirschman Index
+  (`effective_n_groups`), $k$-fold feasibility (`k_fold_feasible`), minimum
+  groups per outcome stratum (`min_stratum_groups`), and severed vs. remaining
+  structural leakage counts; identify top bridging nodes whose removal breaks
+  connected components in the sample-dependency bipartite graph.
+- **Orthogonal temporal ordering (`time_ordering = TRUE`) and thresholded pairwise
+  constraints (`min_weight`, `max_distance`):** `derive_split_constraints()` can
+  attach temporal `order_rank` metadata alongside any grouping mode (`"subject"`,
+  `"batch"`, `"study"`, `"composite"`, `"relatedness"`, `"spatial"`) and filter
+  `subject_related_to` / `sample_adjacent_to` edges by `min_weight` or
+  `max_distance` without rebuilding the graph.
+- **Configurable `stratify_by` in `as_split_spec()`:** Supports stratifying by
+  `"outcome"` (default), `"none"`, `"batch"`, `"study"`, `"site"`, `"region"`,
+  `"platform"`, or `"assay"`.
+- **Multi-omics & Python rolling CV helpers:** Added
+  `graph_from_metadata.MultiAssayExperiment()` and Python
+  `SplitSpec.iter_splits(n_splits, purge_ranks)` for stdlib-only grouped/stratified
+  $k$-fold and leakage-safe forward-chaining group cross-validation.
+
 # splitGraph 0.4.0
 
 ## Fixes made during CRAN submission

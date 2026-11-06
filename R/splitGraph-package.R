@@ -771,7 +771,38 @@ NULL
   from_index <- raw_time_index[precedes$from]
   to_index <- raw_time_index[precedes$to]
   conflict_idx <- !is.na(from_index) & !is.na(to_index) & from_index >= to_index
-  conflicting_pairs <- precedes[conflict_idx, , drop = FALSE]
+  conflicting_pairs <- precedes[conflict_idx, c("edge_id", "from", "to"), drop = FALSE]
+
+  has_idx_ids <- names(raw_time_index)[!is.na(raw_time_index)]
+  if (nrow(nonself_precedes) > 0L && length(cycle_edge_ids) == 0L && length(has_idx_ids) >= 2L) {
+    dist_mat <- igraph::distances(
+      precedence_graph,
+      v = has_idx_ids,
+      to = has_idx_ids,
+      mode = "out"
+    )
+    existing_keys <- paste(conflicting_pairs$from, conflicting_pairs$to, sep = "\r")
+    trans_rows <- list()
+    for (u in has_idx_ids) {
+      reach <- has_idx_ids[is.finite(dist_mat[u, ]) & dist_mat[u, ] > 0]
+      bad_v <- reach[raw_time_index[u] >= raw_time_index[reach]]
+      for (v in bad_v) {
+        k <- paste(u, v, sep = "\r")
+        if (!k %in% existing_keys) {
+          existing_keys <- c(existing_keys, k)
+          trans_rows[[length(trans_rows) + 1L]] <- data.frame(
+            edge_id = nonself_precedes$edge_id[nonself_precedes$from == u][1L],
+            from = u,
+            to = v,
+            stringsAsFactors = FALSE
+          )
+        }
+      }
+    }
+    if (length(trans_rows) > 0L) {
+      conflicting_pairs <- rbind(conflicting_pairs, do.call(rbind, trans_rows))
+    }
+  }
   row.names(conflicting_pairs) <- NULL
 
   list(

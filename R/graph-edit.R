@@ -17,10 +17,30 @@
   edge_data
 }
 
+.depgraph_canonicalize_attrs <- function(a) {
+  if (is.null(a) || length(a) == 0L) {
+    return(stats::setNames(list(), character()))
+  }
+  nms <- names(a)
+  if (!is.null(nms)) {
+    a <- a[order(nms)]
+  }
+  a
+}
+
 # Drop exact duplicate (from, to, edge_type, attrs) rows; error on rows that
 # share (from, to, edge_type) but differ in attrs.
 .depgraph_dedupe_edges <- function(edge_data) {
   if (nrow(edge_data) == 0L) return(edge_data)
+  undir_types <- unname(.depgraph_pairwise_relation)
+  is_undir <- edge_data$edge_type %in% undir_types
+  if (any(is_undir)) {
+    from_u <- pmin(edge_data$from[is_undir], edge_data$to[is_undir])
+    to_u <- pmax(edge_data$from[is_undir], edge_data$to[is_undir])
+    edge_data$from[is_undir] <- from_u
+    edge_data$to[is_undir] <- to_u
+  }
+  edge_data$attrs <- lapply(edge_data$attrs, .depgraph_canonicalize_attrs)
   key <- paste(edge_data$from, edge_data$to, edge_data$edge_type, sep = "\r")
   attr_key <- vapply(edge_data$attrs, function(a) paste(deparse(a), collapse = ""), character(1))
   full_key <- paste(key, attr_key, sep = "\r")
@@ -38,21 +58,64 @@
   out
 }
 
-# Drop exact duplicate node rows; error on rows that share node_id but differ.
+# Collapse duplicate node rows, merging compatible disjoint attributes and
+# erroring on rows that share node_id but conflict in type, key, label, or
+# overlapping attribute values.
 .depgraph_dedupe_nodes <- function(node_data) {
   if (nrow(node_data) == 0L) return(node_data)
-  attr_key <- vapply(node_data$attrs, function(a) paste(deparse(a), collapse = ""), character(1))
-  full_key <- paste(node_data$node_id, node_data$node_type, node_data$node_key, node_data$label, attr_key, sep = "\r")
-  distinct <- !duplicated(full_key)
-  ids <- node_data$node_id[distinct]
-  conflicting <- unique(ids[duplicated(ids)])
+  node_data$attrs <- lapply(node_data$attrs, .depgraph_canonicalize_attrs)
+  if (anyDuplicated(node_data$node_id) == 0L) {
+    row.names(node_data) <- NULL
+    return(node_data)
+  }
+
+  dup_ids <- unique(node_data$node_id[duplicated(node_data$node_id)])
+  conflicting <- character()
+  keep_mask <- !duplicated(node_data$node_id)
+  first_idx_map <- match(dup_ids, node_data$node_id)
+
+  for (k in seq_along(dup_ids)) {
+    nid <- dup_ids[[k]]
+    rows <- which(node_data$node_id == nid)
+    first_r <- rows[[1L]]
+    if (length(unique(node_data$node_type[rows])) > 1L ||
+        length(unique(node_data$node_key[rows])) > 1L ||
+        length(unique(node_data$label[rows])) > 1L) {
+      conflicting <- c(conflicting, nid)
+      next
+    }
+    merged_attrs <- node_data$attrs[[first_r]]
+    has_conflict <- FALSE
+    for (r in rows[-1L]) {
+      cur_attrs <- node_data$attrs[[r]]
+      shared_keys <- intersect(names(merged_attrs), names(cur_attrs))
+      for (sk in shared_keys) {
+        v1 <- merged_attrs[[sk]]
+        v2 <- cur_attrs[[sk]]
+        if (!identical(v1, v2) && !(all(is.na(v1)) && all(is.na(v2)))) {
+          has_conflict <- TRUE
+          break
+        }
+      }
+      if (has_conflict) break
+      for (nk in setdiff(names(cur_attrs), names(merged_attrs))) {
+        merged_attrs[[nk]] <- cur_attrs[[nk]]
+      }
+    }
+    if (has_conflict) {
+      conflicting <- c(conflicting, nid)
+    } else {
+      node_data$attrs[[first_idx_map[[k]]]] <- .depgraph_canonicalize_attrs(merged_attrs)
+    }
+  }
+
   if (length(conflicting) > 0L) {
     .depgraph_stop(
       paste0("Conflicting node definitions found for IDs: ", paste(conflicting, collapse = ", ")),
       class = "splitgraph_ambiguity_error", code = "conflicting_node_definitions"
     )
   }
-  out <- node_data[distinct, , drop = FALSE]
+  out <- node_data[keep_mask, , drop = FALSE]
   row.names(out) <- NULL
   out
 }
@@ -86,15 +149,15 @@
 #' rooted at one of them (a \code{sample_adjacent_to} edge is kept only when
 #' both samples are kept), the non-sample nodes those edges point to, and,
 #' transitively, non-sample nodes reachable from kept nodes through
-#' non-sample edges (\code{assay_uses_platform},
-#' \code{featureset_generated_from_*}, \code{subject_related_to},
-#' \code{subject_has_outcome}). \code{timepoint_precedes} edges are kept only
-#' between retained timepoints, so when \code{time_index} is absent the
-#' ordering of a subset may become partial; \code{derive_split_constraints(mode
-#' = "time")} reports that in its warnings. Restricting the graph this way has
-#' the same semantics as the \code{samples} argument of
-#' \code{\link{derive_split_constraints}}: structure that only reaches the
-#' subset through excluded samples is dropped.
+#' hierarchical non-sample edges (\code{assay_uses_platform},
+#' \code{featureset_generated_from_*}, \code{subject_has_outcome}).
+#' \code{timepoint_precedes} and \code{subject_related_to} edges are kept only
+#' between retained timepoints and subjects, so when \code{time_index} is
+#' absent the ordering of a subset may become partial;
+#' \code{derive_split_constraints(mode = "time")} reports that in its warnings.
+#' Restricting the graph this way has the same semantics as the \code{samples}
+#' argument of \code{\link{derive_split_constraints}}: structure that only
+#' reaches the subset through excluded samples is dropped.
 #'
 #' \code{combine_graphs()} takes the union of node and edge tables. Identical
 #' rows are collapsed; a node id or an \code{(from, to, edge_type)} relation
@@ -157,22 +220,21 @@ subset_graph <- function(graph, samples, graph_name = NULL, dataset_name = NULL,
   sample_rooted <- edge_data$from %in% keep_samples & !(edge_data$to %in% dropped_samples)
   kept_nodes <- unique(c(keep_samples, edge_data$to[sample_rooted]))
 
-  # Transitive closure over non-sample edges, except timepoint_precedes.
+  # Transitive closure over hierarchical non-sample edges, except
+  # timepoint_precedes and subject_related_to (which are retained only between
+  # timepoints/subjects already belonging to the kept sample subset).
   non_sample_edge <- !(edge_data$from %in% all_samples) & !(edge_data$to %in% all_samples) &
-    edge_data$edge_type != "timepoint_precedes"
+    !(edge_data$edge_type %in% c("timepoint_precedes", "subject_related_to"))
   repeat {
     reach <- non_sample_edge & edge_data$from %in% kept_nodes & !(edge_data$to %in% kept_nodes)
     if (!any(reach)) break
     kept_nodes <- unique(c(kept_nodes, edge_data$to[reach]))
   }
-  # Undirected-in-spirit relations (subject_related_to) can also reach a kept
-  # node from their `to` side; include those neighbours once as well.
-  undirected <- edge_data$edge_type == "subject_related_to" & edge_data$to %in% kept_nodes & !(edge_data$from %in% kept_nodes)
-  kept_nodes <- unique(c(kept_nodes, edge_data$from[undirected]))
 
   keep_edge <- sample_rooted |
     (non_sample_edge & edge_data$from %in% kept_nodes & edge_data$to %in% kept_nodes) |
-    (edge_data$edge_type == "timepoint_precedes" & edge_data$from %in% kept_nodes & edge_data$to %in% kept_nodes)
+    (edge_data$edge_type %in% c("timepoint_precedes", "subject_related_to") &
+       edge_data$from %in% kept_nodes & edge_data$to %in% kept_nodes)
 
   new_nodes <- node_data[node_data$node_id %in% kept_nodes, , drop = FALSE]
   new_edges <- edge_data[keep_edge, , drop = FALSE]

@@ -1247,7 +1247,20 @@ Interpretation:
 
 If the leakage concern is repeated measurements from the same individual, use
 the subject constraint. If the evaluation question is prospective prediction,
-the time constraint adds the ordering information you need.
+the time constraint adds the ordering information you need. When you need
+*both* simultaneously — keeping each subject's samples together as the group
+unit while still attaching temporal ordering metadata (`order_rank` and
+`ordering_required`) without collapsing distinct subjects measured at the same
+visit into one group — pass `time_ordering = TRUE`:
+
+```{r case-study-1-orthogonal}
+subject_time_constraint <- derive_split_constraints(
+  graph,
+  mode = "subject",
+  time_ordering = TRUE
+)
+subject_time_constraint$sample_map[, c("sample_id", "group_id", "timepoint_id", "order_rank")]
+```
 
 ### Case study 2: a subject reused across studies
 
@@ -1381,7 +1394,17 @@ Interpretation:
   deterministic hierarchy over partially observed metadata
 
 The package does not choose the scientific objective for you. It makes the
-trade-off visible and auditable.
+trade-off visible and auditable. You can automate this side-by-side comparison —
+including effective group count (inverse Herfindahl-Hirschman index), $k$-fold
+feasibility, and severed vs. remaining leakage warnings — with
+`compare_split_constraints()`, and pinpoint which specific non-sample nodes
+(such as shared batches) bridge otherwise separate subject components with
+`find_dependency_bridges()`:
+
+```{r case-study-4-feasibility}
+compare_split_constraints(graph, k = 2)
+find_dependency_bridges(graph, via = c("Subject", "Batch"))
+```
 
 ## When `splitGraph` is useful
 

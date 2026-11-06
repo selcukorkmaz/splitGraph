@@ -43,7 +43,8 @@ query_shortest_paths(
 
 detect_dependency_components(
   graph,
-  via = c("Subject", "Batch", "Study", "Timepoint", "Assay", "FeatureSet", "Outcome"),
+  via = c("Subject", "Batch", "Study", "Timepoint", "Site", "Region", "Platform",
+    "Assay", "FeatureSet", "Outcome"),
   edge_types = NULL,
   min_size = 1
 )

@@ -6,7 +6,12 @@
 \alias{summarize_leakage_risks}
 \title{Translate splitGraph Constraints into Stable Split Specifications}
 \usage{
-as_split_spec(constraint, graph = NULL)
+as_split_spec(
+  constraint,
+  graph = NULL,
+  stratify_by = c("outcome", "none", "batch", "study", "site", "region", "platform",
+    "assay")
+)
 
 validate_split_spec(x)
 
@@ -21,6 +26,12 @@ summarize_leakage_risks(
 \item{constraint}{A \code{split_constraint}.}
 
 \item{graph}{A \code{dependency_graph}.}
+
+\item{stratify_by}{Optional stratification source when \code{graph} is
+supplied: \code{"outcome"} (default, from \code{Outcome} nodes),
+\code{"none"} (disable stratum annotation), or one of \code{"batch"},
+\code{"study"}, \code{"site"}, \code{"region"}, \code{"platform"},
+\code{"assay"}.}
 
 \item{x}{A \code{split_spec}.}
 
@@ -103,19 +114,14 @@ Verified against the released versions on 2026-09-14:
 
 \tabular{lll}{
   \strong{Consumer} \tab \strong{Reads} \tab \strong{Modes} \cr
-  bioLeak 0.3.8 \code{as_leaksplits()} \tab
+  bioLeak \code{as_leaksplits()} \tab
     \code{sample_data} columns \code{sample_id}, the \code{group_var} column,
     \code{batch_group}, \code{study_group}, \code{timepoint_id},
     \code{order_rank}; fields \code{group_var}, \code{constraint_mode},
     \code{time_var} \tab
-    subject, batch, study, time. Every other \code{constraint_mode}
-    currently \emph{errors} inside bioLeak: site, region, platform, assay,
-    relatedness and spatial are absent from its mode map ("subscript out of
-    bounds"), and composite maps to \code{make_split_plan(mode =
-    "combined")} without the \code{constraints} / \code{primary_axis} that
-    mode requires. Until that is fixed, join \code{group_id} onto your
-    observation frame and call \code{bioLeak::make_split_plan(group =
-    "group_id")} directly; the grouping is preserved. \cr
+    \code{subject}, \code{batch}, \code{study}, \code{time} on CRAN 0.3.8
+    (all 11 modes via \code{make_split_plan(group = spec$group_var)} or in
+    bioLeak > 0.3.8) \cr
   Python \code{splitspec} reader (shipped) \tab
     every field and column, including \code{stratum_var} / \code{stratum}
     and the block columns \tab all \cr
@@ -123,9 +129,8 @@ Verified against the released versions on 2026-09-14:
     \code{group_id} for \code{group_vfold_cv()}, \code{order_rank} for
     \code{rolling_origin()}; block columns read for fold auditing \tab all \cr
 }
-Every row is pinned by a contract test (run when bioLeak is installed),
-including the workaround, so the seam cannot drift silently; the test fails
-deliberately when a bioLeak release starts accepting the other modes.
+Every row is pinned by a contract test (run when bioLeak is installed)
+so the seam cannot drift silently.
 }
 
 \examples{

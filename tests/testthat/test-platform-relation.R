@@ -139,5 +139,7 @@ test_that("platform_group and assay_group survive a split_spec JSON round-trip",
 
 test_that("plot renders a graph containing Platform nodes", {
   g <- make_platform_graph()
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
   expect_silent(plot(g))
 })

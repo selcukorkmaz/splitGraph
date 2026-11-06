@@ -187,16 +187,42 @@
   )
 }
 
-.depgraph_edge_types_for_via <- function(via, edge_types = NULL) {
+.depgraph_parse_via_sources <- function(via, edge_types = NULL) {
+  pairwise_modes <- character()
   if (!is.null(edge_types)) {
-    return(unique(as.character(edge_types)))
+    edge_types <- unique(as.character(edge_types))
+    for (pm in names(.depgraph_pairwise_relation)) {
+      if (.depgraph_pairwise_relation[[pm]] %in% edge_types) {
+        pairwise_modes <- c(pairwise_modes, pm)
+      }
+    }
+    return(list(edge_types = edge_types, pairwise_modes = unique(pairwise_modes)))
   }
 
-  via <- unique(vapply(via, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
-  .depgraph_edge_schema$edge_type[
+  node_types <- character()
+  for (x in as.character(via)) {
+    x_low <- tolower(x)
+    if (x_low %in% names(.depgraph_pairwise_relation)) {
+      pairwise_modes <- c(pairwise_modes, x_low)
+    } else if (x_low %in% tolower(.depgraph_pairwise_relation)) {
+      rel_idx <- match(x_low, tolower(.depgraph_pairwise_relation))
+      pairwise_modes <- c(pairwise_modes, names(.depgraph_pairwise_relation)[[rel_idx]])
+    } else if (x_low %in% names(.depgraph_constraint_mode_map)) {
+      node_types <- c(node_types, unname(.depgraph_constraint_mode_map[[x_low]]))
+    } else {
+      node_types <- c(node_types, .depgraph_match_node_type(x))
+    }
+  }
+  node_types <- unique(node_types)
+  selected_edge_types <- .depgraph_edge_schema$edge_type[
     .depgraph_edge_schema$from_type == "Sample" &
-      .depgraph_edge_schema$to_type %in% via
+      .depgraph_edge_schema$to_type %in% node_types
   ]
+  list(edge_types = selected_edge_types, pairwise_modes = unique(pairwise_modes))
+}
+
+.depgraph_edge_types_for_via <- function(via, edge_types = NULL) {
+  .depgraph_parse_via_sources(via, edge_types = edge_types)$edge_types
 }
 
 .depgraph_empty_shared_table <- function() {
@@ -442,20 +468,40 @@ query_neighbors <- function(graph, node_ids, edge_types = NULL, node_types = NUL
   node_data <- graph$nodes$data
   edge_data <- .depgraph_subset_edges(graph, edge_types = edge_types)
 
+  undir_types <- unname(.depgraph_pairwise_relation)
+  if (!is.null(node_types)) {
+    node_types <- unique(vapply(node_types, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
+  }
+
   for (seed in seed_ids) {
-    neigh <- igraph::neighbors(g, v = seed, mode = direction)
-    neigh_ids <- igraph::as_ids(neigh)
+    dir_neigh <- igraph::as_ids(igraph::neighbors(g, v = seed, mode = direction))
+    undir_rows <- edge_data[
+      edge_data$edge_type %in% undir_types & (edge_data$from == seed | edge_data$to == seed),
+      ,
+      drop = FALSE
+    ]
+    undir_neigh <- ifelse(undir_rows$from == seed, undir_rows$to, undir_rows$from)
+    neigh_ids <- unique(c(dir_neigh, undir_neigh))
     if (!is.null(node_types) && length(neigh_ids) > 0L) {
-      node_types <- unique(vapply(node_types, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
       keep <- node_data$node_type[match(neigh_ids, node_data$node_id)] %in% node_types
       neigh_ids <- neigh_ids[keep]
     }
 
     for (neighbor in neigh_ids) {
       edge_rows <- if (identical(direction, "out")) {
-        edge_data[edge_data$from == seed & edge_data$to == neighbor, , drop = FALSE]
+        edge_data[
+          (edge_data$from == seed & edge_data$to == neighbor) |
+            (edge_data$edge_type %in% undir_types & edge_data$from == neighbor & edge_data$to == seed),
+          ,
+          drop = FALSE
+        ]
       } else if (identical(direction, "in")) {
-        edge_data[edge_data$from == neighbor & edge_data$to == seed, , drop = FALSE]
+        edge_data[
+          (edge_data$from == neighbor & edge_data$to == seed) |
+            (edge_data$edge_type %in% undir_types & edge_data$from == seed & edge_data$to == neighbor),
+          ,
+          drop = FALSE
+        ]
       } else {
         .depgraph_edge_between(edge_data, seed, neighbor, undirected = TRUE)
       }
@@ -528,6 +574,16 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
   cap_binding <- (cutoff_value != -1L)
   hit_cap <- FALSE
 
+  allowed_types <- NULL
+  search_graph <- filtered_graph
+  if (!is.null(node_types)) {
+    allowed_types <- unique(vapply(node_types, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
+    allowed_nodes <- graph$nodes$data$node_id[graph$nodes$data$node_type %in% allowed_types]
+    if (all(c(from_ids, to_ids) %in% allowed_nodes)) {
+      search_graph <- igraph::induced_subgraph(filtered_graph, vids = allowed_nodes)
+    }
+  }
+
   for (from_id in from_ids) {
     for (to_id in to_ids) {
       paths <- igraph::all_simple_paths(
@@ -537,24 +593,32 @@ query_paths <- function(graph, from, to, edge_types = NULL, node_types = NULL, m
         mode = mode,
         cutoff = cutoff_value
       )
-      if (length(paths) == 0L) {
-        next
+      kept_for_pair <- 0L
+      if (length(paths) > 0L) {
+        for (path in paths) {
+          node_ids_in_path <- igraph::as_ids(path)
+          if (!is.null(allowed_types)) {
+            path_types <- graph$nodes$data$node_type[match(node_ids_in_path, graph$nodes$data$node_id)]
+            if (!all(path_types %in% allowed_types)) {
+              next
+            }
+          }
+          if (cap_binding && (length(node_ids_in_path) - 1L) >= cutoff_value) {
+            hit_cap <- TRUE
+          }
+          path_nodes[[path_idx]] <- node_ids_in_path
+          path_idx <- path_idx + 1L
+          kept_for_pair <- kept_for_pair + 1L
+        }
       }
-
-      for (path in paths) {
-        node_ids_in_path <- igraph::as_ids(path)
-        if (!is.null(node_types)) {
-          allowed_types <- unique(vapply(node_types, .depgraph_match_node_type, character(1), USE.NAMES = FALSE))
-          path_types <- graph$nodes$data$node_type[match(node_ids_in_path, graph$nodes$data$node_id)]
-          if (!all(path_types %in% allowed_types)) {
-            next
+      if (cap_binding && !hit_cap && kept_for_pair == 0L) {
+        g_vnames <- igraph::V(search_graph)$name
+        if (from_id %in% g_vnames && to_id %in% g_vnames) {
+          d <- suppressWarnings(igraph::distances(search_graph, v = from_id, to = to_id, mode = mode)[1L, 1L])
+          if (is.finite(d) && d > cutoff_value) {
+            hit_cap <- TRUE
           }
         }
-        if (cap_binding && (length(node_ids_in_path) - 1L) >= cutoff_value) {
-          hit_cap <- TRUE
-        }
-        path_nodes[[path_idx]] <- node_ids_in_path
-        path_idx <- path_idx + 1L
       }
     }
   }
@@ -625,15 +689,21 @@ query_shortest_paths <- function(graph, from, to, edge_types = NULL, node_types 
 #' @export
 detect_dependency_components <- function(graph,
                                          via = c("Subject", "Batch", "Study", "Timepoint",
+                                                 "Site", "Region", "Platform",
                                                  "Assay", "FeatureSet", "Outcome"),
                                          edge_types = NULL, min_size = 1) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   sample_nodes <- graph$nodes$data[graph$nodes$data$node_type == "Sample", , drop = FALSE]
-  selected_edge_types <- .depgraph_edge_types_for_via(via, edge_types)
+  via_parsed <- .depgraph_parse_via_sources(via, edge_types)
+  selected_edge_types <- via_parsed$edge_types
+  pairwise_modes <- via_parsed$pairwise_modes
 
   # Grouping first, on the bipartite sample-target graph (linear); the explicit
   # pair table below is only materialised for the samples that survive min_size.
-  dep_edges <- .depgraph_dependency_edges(graph, sample_nodes$node_id, selected_edge_types)
+  dep_edges <- .depgraph_dependency_edges(graph, sample_nodes$node_id, selected_edge_types)[, c("from", "to"), drop = FALSE]
+  for (pm in pairwise_modes) {
+    dep_edges <- rbind(dep_edges, .depgraph_pairwise_component_edges(graph, pm, sample_nodes$node_id))
+  }
   comps <- .depgraph_sample_components(sample_nodes$node_id, dep_edges)
   table <- data.frame(
     sample_id = sample_nodes$node_key,
@@ -650,9 +720,30 @@ detect_dependency_components <- function(graph,
   shared <- if (length(keep_nodes) == 0L) {
     .depgraph_empty_shared_table()
   } else {
-    .depgraph_shared_dependency_table(graph, via = via, samples = keep_nodes, edge_types = edge_types)
+    .depgraph_shared_dependency_table(graph, via = via, samples = keep_nodes, edge_types = selected_edge_types)
   }
   projection <- .depgraph_project_sample_dependencies(shared)
+  if (length(keep_nodes) > 0L && "spatial" %in% pairwise_modes) {
+    sp_edges <- graph$edges$data[
+      graph$edges$data$edge_type == "sample_adjacent_to" &
+        graph$edges$data$from %in% keep_nodes &
+        graph$edges$data$to %in% keep_nodes,
+      ,
+      drop = FALSE
+    ]
+    if (nrow(sp_edges) > 0L) {
+      sp_proj <- data.frame(
+        sample_node_id_1 = pmin(sp_edges$from, sp_edges$to),
+        sample_node_id_2 = pmax(sp_edges$from, sp_edges$to),
+        projection_edge_id = sp_edges$edge_id,
+        stringsAsFactors = FALSE
+      )
+      projection <- unique(rbind(projection[, c("sample_node_id_1", "sample_node_id_2"), drop = FALSE],
+                                 sp_proj[, c("sample_node_id_1", "sample_node_id_2"), drop = FALSE]))
+      row.names(projection) <- NULL
+      projection$projection_edge_id <- paste0("projection_", seq_len(nrow(projection)))
+    }
+  }
   edge_ids <- .depgraph_shared_dependency_edge_ids(graph, shared)
 
   .depgraph_query_result(

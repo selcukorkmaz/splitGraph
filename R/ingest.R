@@ -31,6 +31,14 @@ ingest_metadata <- function(data, col_map = NULL, dataset_name = NULL, strict = 
     )
     rename_idx <- match(unname(col_map), names(out))
     names(out)[rename_idx] <- names(col_map)
+    if (anyDuplicated(names(out)) > 0L) {
+      dup_cols <- unique(names(out)[duplicated(names(out))])
+      .depgraph_stop(
+        paste0("`col_map` creates duplicate column names in `data`: ", paste(dup_cols, collapse = ", ")),
+        class = "splitgraph_input_error",
+        code = "duplicate_mapped_columns"
+      )
+    }
   }
 
   required_cols <- "sample_id"
@@ -210,9 +218,18 @@ create_edges <- function(data, from_col, to_col, from_type, to_type, relation,
     }
   }
 
+  from_vec <- .depgraph_make_node_id(from_type, selected[[from_col]], prefix = from_prefix)
+  to_vec <- .depgraph_make_node_id(to_type, selected[[to_col]], prefix = to_prefix)
+  if (relation %in% unname(.depgraph_pairwise_relation)) {
+    from_canon <- pmin(from_vec, to_vec)
+    to_canon <- pmax(from_vec, to_vec)
+    from_vec <- from_canon
+    to_vec <- to_canon
+  }
+
   edge_data <- data.frame(
-    from = .depgraph_make_node_id(from_type, selected[[from_col]], prefix = from_prefix),
-    to = .depgraph_make_node_id(to_type, selected[[to_col]], prefix = to_prefix),
+    from = from_vec,
+    to = to_vec,
     edge_type = relation,
     attrs = .depgraph_make_attr_list(selected, attr_cols),
     stringsAsFactors = FALSE

@@ -155,6 +155,7 @@ file and adds the accessors a resampler needs:
 | `order_ranks()` | `order_rank` per sample, `None` where undetermined |
 | `ordered_index()` | row indices sorted by `order_rank`, missing ranks last |
 | `grouping()` | `{sample_id: group_id}` — the analogue of `grouping_vector()` |
+| `iter_splits(n_splits=5, purge_ranks=0)` | stdlib-only `(train_idx, test_idx)` generator (grouped/stratified $k$-fold or purged forward-chaining) |
 | `to_frame()` | `sample_data` as a pandas DataFrame |
 | `group_kfold()`, `stratified_group_kfold()` | scikit-learn splitters, wired up |
 

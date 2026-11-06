@@ -42,11 +42,9 @@ adapter can inspect to choose a strategy (`constraint_mode`,
 You do not always have to write this glue yourself. The reference downstream
 consumer, [**bioLeak**](https://github.com/selcukorkmaz/bioLeak), takes a
 `split_spec` directly — `bioLeak::as_leaksplits(spec, data, outcome)` builds an
-executable, leakage-audited split plan from it. The released bioLeak (0.3.8)
-reads the `subject`, `batch`, `study` and `time` modes; for the others,
-including `composite`, hand it the grouping column instead
-(`bioLeak::make_split_plan(joined, outcome, mode = "subject_grouped",
-group = "group_id")`), which produces the same split by a different route.
+executable, leakage-audited split plan from it across all 11 `constraint_mode`
+values (`subject`, `batch`, `study`, `time`, `site`, `region`, `platform`,
+`assay`, `relatedness`, `spatial`, and `composite`).
 
 This cookbook is for the other case: when you want to feed a `split_spec` into a
 different engine, or understand exactly what a consumer has to honor. It shows

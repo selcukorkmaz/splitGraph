@@ -28,8 +28,8 @@ test_that("every S3 method prints, summarises, and converts", {
 
   objects <- list(g$nodes, g$edges, g, q, con, report, spec, preflight, risks)
   for (obj in objects) {
-    expect_output(print(obj))
-    expect_identical(print(obj), obj)
+    expect_output(ret <- print(obj))
+    expect_identical(ret, obj)
     s <- summary(obj)
     expect_true(is.list(s))
   }

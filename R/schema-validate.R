@@ -134,11 +134,11 @@ validate_graph_json <- function(path) {
 
   node_rows <- parsed$nodes
   edge_rows <- parsed$edges
-  if (!is.null(node_rows) && !is.list(node_rows)) {
+  if (is.null(node_rows) || !.depgraph_is_json_array(node_rows)) {
     issues <- c(issues, "`nodes` must be an array.")
     node_rows <- list()
   }
-  if (!is.null(edge_rows) && !is.list(edge_rows)) {
+  if (is.null(edge_rows) || !.depgraph_is_json_array(edge_rows)) {
     issues <- c(issues, "`edges` must be an array.")
     edge_rows <- list()
   }
@@ -146,6 +146,10 @@ validate_graph_json <- function(path) {
   node_ids <- character()
   for (i in seq_along(node_rows)) {
     r <- node_rows[[i]]
+    if (!.depgraph_is_json_object(r)) {
+      issues <- c(issues, paste0("node[", i, "]: must be a JSON object."))
+      next
+    }
     if (!.depgraph_is_string(r$node_id) || !.depgraph_is_string(r$node_type) ||
         !.depgraph_is_string(r$node_key)) {
       issues <- c(issues, paste0("node[", i, "]: `node_id`, `node_type`, `node_key` are required strings."))
@@ -163,6 +167,10 @@ validate_graph_json <- function(path) {
   valid_edge_types <- .depgraph_edge_schema$edge_type
   for (i in seq_along(edge_rows)) {
     r <- edge_rows[[i]]
+    if (!.depgraph_is_json_object(r)) {
+      issues <- c(issues, paste0("edge[", i, "]: must be a JSON object."))
+      next
+    }
     if (!.depgraph_is_string(r$edge_id) || !.depgraph_is_string(r$from) ||
         !.depgraph_is_string(r$to) || !.depgraph_is_string(r$edge_type)) {
       issues <- c(issues, paste0("edge[", i, "]: `edge_id`, `from`, `to`, `edge_type` are required strings."))
@@ -247,6 +255,10 @@ validate_split_spec_json <- function(path) {
   )
   for (i in seq_along(sample_rows)) {
     r <- sample_rows[[i]]
+    if (!.depgraph_is_json_object(r)) {
+      issues <- c(issues, paste0("sample_data[", i, "]: must be a JSON object."))
+      next
+    }
     if (!.depgraph_is_string(r$sample_id)) {
       issues <- c(issues, paste0("sample_data[", i, "]: `sample_id` is a required string."))
     }

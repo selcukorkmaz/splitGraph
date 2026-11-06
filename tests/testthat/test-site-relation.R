@@ -103,6 +103,8 @@ test_that("derive_split_constraints(mode='site') rejects ambiguous site assignme
 
 test_that("plot renders a graph containing Site nodes", {
   g <- make_site_graph()
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
   expect_silent(plot(g))
 })
 

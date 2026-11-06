@@ -64,11 +64,15 @@ split is possible. Three remedies, in order of preference:
    annotation instead (`spec$block_vars`).
 2. Use `strategy = "rule_based"`: each sample is grouped by the first relation
    in `priority` that is available to it, so relations do not chain.
-3. Use `detect_dependency_components()` to see the component sizes before
-   deriving, and `summarize_leakage_risks()` to see which leakage paths a given
-   mode actually severs (`severed` column).
+3. Use `compare_split_constraints()` to compare candidate modes (group counts,
+   effective group counts, $k$-fold feasibility, and severed vs. remaining
+   leakage risks), `find_dependency_bridges()` to pinpoint which specific
+   entities (e.g. a shared batch or site) merge components, and
+   `summarize_leakage_risks()` to inspect the `severed` column per mode.
 
 ```{r remedies}
+compare_split_constraints(g, k = 2)
+find_dependency_bridges(g, via = c("Subject", "Batch"))
 grouping_vector(derive_split_constraints(g, "composite", strategy = "rule_based",
                                          via = c("subject", "batch"),
                                          priority = c("subject", "batch")))
@@ -103,10 +107,18 @@ build(0.25)  # only P1~P2 pass: {S1,S2}, {S3}
 build(0.10)  # P2~P3 also passes and chains: {S1,S2,S3}
 ```
 
+You can also build the graph once at a permissive threshold and vary
+`min_weight` (for relatedness) or `max_distance` (for spatial) directly inside
+`derive_split_constraints()` without rebuilding the graph.
+
 ## What does the `stratum` column mean, and does splitGraph stratify?
 
-No. `stratum` is an *annotation*: the outcome level attached to each sample
-(from `sample_has_outcome`, or the subject's outcome via `subject_has_outcome`).
+No. `stratum` is an *annotation*: by default (`stratify_by = "outcome"`), the
+outcome level attached to each sample (from `sample_has_outcome`, or the
+subject's outcome via `subject_has_outcome`). You can also pass
+`stratify_by = "batch"` (or `"study"`, `"site"`, `"region"`, `"platform"`,
+`"assay"`, or `"none"`) to `as_split_spec()` to populate `stratum` from a
+blocking variable instead.
 It is exposed through `spec$stratum_var` so a consumer such as scikit-learn's
 `StratifiedGroupKFold` or bioLeak's `stratify = TRUE` can balance folds.
 Balancing is execution and belongs downstream; splitGraph only describes.
@@ -161,11 +173,13 @@ Python reader is *stricter*. Where R warns and loads, `splitspec` raises a
 non-interactive consumer is better off failing than silently misreading a format
 it does not know. Both implementations accept every schema sharing major `0`.
 
-## Can I build a graph straight from a SummarizedExperiment?
+## Can I build a graph straight from a SummarizedExperiment or MultiAssayExperiment?
 
-Yes. `graph_from_metadata()` is an S3 generic, and the
-`SummarizedExperiment` method reads `colData()` as the metadata table. When
-`colData` has no `sample_id` column the assay column names are used, so a
+Yes. `graph_from_metadata()` is an S3 generic. The `SummarizedExperiment`
+method reads `colData()` as the metadata table (and `MultiAssayExperiment`
+reads `sampleMap()` and `colData()`, mapping `colname` $\rightarrow$
+`sample_id`, `primary` $\rightarrow$ `subject_id`, and `assay` $\rightarrow$
+`assay_id`). When `colData` has no `sample_id` column the assay column names are used, so a
 typical Bioconductor object needs no preparation at all. Pass
 `sample_id_col =` to name a different column, and `columns =` to map your own
 names onto the canonical ones exactly as for a data frame.

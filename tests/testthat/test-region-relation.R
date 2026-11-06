@@ -102,6 +102,8 @@ test_that("derive_split_constraints(mode='region') rejects ambiguous region assi
 
 test_that("plot renders a graph containing Region nodes", {
   g <- make_region_graph()
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
   expect_silent(plot(g))
 })
 

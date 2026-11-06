@@ -110,42 +110,72 @@ test_that("bioLeak 0.3.x accepts exactly the subject / batch / study / time mode
   }
 })
 
-test_that("bioLeak 0.3.x rejects the six 0.3.0-era modes AND composite (pinned)", {
+test_that("bioLeak 0.3.0-era modes and composite specs match the installed bioLeak version (Workstream D2)", {
   skip_if_no_bioleak()
-  # Two distinct limitations in bioLeak <= 0.3.8's `as_leaksplits()`:
-  #
-  #  * its `mode_map` names only subject/batch/study/time/composite, and
-  #    `mode_map[[src_mode]]` on a named atomic vector errors ("subscript out
-  #    of bounds") for anything else, so the intended `subject_grouped`
-  #    fallback on the next line is unreachable;
-  #  * `composite` IS named, mapping to `make_split_plan(mode = "combined")`,
-  #    but the adapter never supplies the `constraints` / `primary_axis` that
-  #    mode requires, so it errors too.
-  #
-  # Both are pinned here so the seam is explicit. When a bioLeak release fixes
-  # either, this test fails on purpose: flip the affected rows to assert that
-  # grouping and blocking are honoured (Workstream D2 of ROADMAP-0.4.0.md).
   g <- richer_contract_graph()
+  fn_body <- paste(deparse(body(bioLeak::as_leaksplits)), collapse = "\n")
+  has_extended_modes <- grepl("relatedness", fn_body, fixed = TRUE)
 
-  for (mode in c("site", "region", "platform", "assay", "relatedness", "spatial")) {
-    spec <- as_split_spec(derive_split_constraints(g, mode = mode), graph = g)
-    expect_identical(spec$constraint_mode, mode)
-    expect_error(
-      bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
-      info = paste("bioLeak accepted mode", mode, "- flip this test (Workstream D2)")
-    )
-  }
+  if (has_extended_modes) {
+    for (mode in c("site", "region", "platform", "assay", "relatedness", "spatial")) {
+      spec <- as_split_spec(derive_split_constraints(g, mode = mode), graph = g)
+      expect_identical(spec$constraint_mode, mode)
+      expect_s4_class(
+        bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
+        "LeakSplits"
+      )
+    }
 
-  for (strategy in c("strict", "rule_based")) {
-    spec <- as_split_spec(
-      derive_split_constraints(g, mode = "composite", strategy = strategy, via = c("subject", "site")),
+    spec_strict <- as_split_spec(
+      derive_split_constraints(g, mode = "composite", strategy = "strict", via = c("subject", "study")),
       graph = g
     )
-    expect_identical(spec$constraint_mode, "composite")
-    expect_error(
-      bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2),
-      info = paste("bioLeak accepted composite", strategy, "- flip this test (Workstream D2)")
+    expect_identical(spec_strict$constraint_mode, "composite")
+    expect_s4_class(
+      bioLeak::as_leaksplits(spec_strict, data = contract_data(), outcome = "y", v = 2),
+      "LeakSplits"
     )
+
+    spec_rule <- as_split_spec(
+      derive_split_constraints(g, mode = "composite", strategy = "rule_based", via = c("subject", "site")),
+      graph = g
+    )
+    expect_identical(spec_rule$constraint_mode, "composite")
+    expect_s4_class(
+      bioLeak::as_leaksplits(spec_rule, data = contract_data(), outcome = "y", v = 2),
+      "LeakSplits"
+    )
+
+    # A strict composite that collapses all samples into 1 group cannot form 2 folds.
+    spec_collapsed <- as_split_spec(
+      derive_split_constraints(g, mode = "composite", strategy = "strict", via = c("subject", "site")),
+      graph = g
+    )
+    expect_error(
+      bioLeak::as_leaksplits(spec_collapsed, data = contract_data(), outcome = "y", v = 2),
+      "1 group"
+    )
+  } else {
+    # Released CRAN bioLeak 0.3.8: only subject / batch / study / time are in
+    # mode_map, and composite maps to "combined" without a constraints list.
+    for (mode in c("site", "region", "platform", "assay", "relatedness", "spatial")) {
+      spec <- as_split_spec(derive_split_constraints(g, mode = mode), graph = g)
+      expect_identical(spec$constraint_mode, mode)
+      expect_error(
+        bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2)
+      )
+    }
+
+    for (strategy in c("strict", "rule_based")) {
+      spec <- as_split_spec(
+        derive_split_constraints(g, mode = "composite", strategy = strategy, via = c("subject", "site")),
+        graph = g
+      )
+      expect_identical(spec$constraint_mode, "composite")
+      expect_error(
+        bioLeak::as_leaksplits(spec, data = contract_data(), outcome = "y", v = 2)
+      )
+    }
   }
 })
 

@@ -4,6 +4,7 @@
 \alias{graph_from_metadata}
 \alias{graph_from_metadata.default}
 \alias{graph_from_metadata.SummarizedExperiment}
+\alias{graph_from_metadata.MultiAssayExperiment}
 \alias{graph_from_metadata.data.frame}
 \title{Build a Dependency Graph Directly from a Metadata Table}
 \usage{
@@ -12,6 +13,14 @@ graph_from_metadata(meta, ...)
 \method{graph_from_metadata}{default}(meta, ...)
 
 \method{graph_from_metadata}{SummarizedExperiment}(meta, ..., sample_id_col = NULL)
+
+\method{graph_from_metadata}{MultiAssayExperiment}(
+  meta,
+  ...,
+  sample_id_col = "colname",
+  subject_id_col = "primary",
+  assay_id_col = "assay"
+)
 
 \method{graph_from_metadata}{data.frame}(
   meta,
@@ -39,7 +48,13 @@ coerced to character by \code{ingest_metadata()}.}
 \item{sample_id_col}{For the \code{SummarizedExperiment} method: the
 \code{colData} column holding sample identifiers. When \code{NULL}
 (default) a \code{sample_id} column is used if present, otherwise the
-assay column names (\code{colnames(se)}) become the sample identifiers.}
+assay column names (\code{colnames(se)}) become the sample identifiers.
+For the \code{MultiAssayExperiment} method: the \code{sampleMap} column
+holding assay sample identifiers (default \code{"colname"}).}
+
+\item{subject_id_col, assay_id_col}{For the \code{MultiAssayExperiment}
+method: \code{sampleMap} columns holding subject (\code{"primary"}) and
+assay (\code{"assay"}) identifiers.}
 
 \item{columns}{Optional named character vector passed to
 \code{ingest_metadata()} to rename user columns to canonical names.}

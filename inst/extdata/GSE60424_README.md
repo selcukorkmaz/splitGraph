@@ -21,7 +21,7 @@ multiple sclerosis). 134 samples. Used by `vignette("case-study-gse60424")`.
 | `cell_type` | `celltype` | B-cells, CD4, CD8, Monocytes, Neutrophils, NK, Whole Blood |
 | `disease_status` | `diseasestatus` | as recorded, including "MS pretreatment" / "MS posttreatment" |
 | `condition` | derived | `disease_status` with the MS pre/post suffix removed (5 levels) |
-| `timepoint_id`, `time_index` | derived | `pre_treatment` / `post_treatment` for MS, else `baseline`. **Not** a repeated-measure axis: the pre- and post-treatment MS samples come from different donors. Kept only so the vignette can show why they should not be modelled as timepoints. |
+| `timepoint_id`, `time_index` | derived | `pre_treatment` / `post_treatment` for MS, else `baseline`. In the GEO series matrix, the six MS blood draws carry six distinct `donorid` values (`D31`, `D45`, `D55` pretreatment; `D33`, `D46`, `D56` posttreatment), even though the study protocol sampled 3 MS patients before and 24 hours after IFN-beta treatment on consecutive days (`2012-05-21`/`22`, `2012-06-28`/`29`, `2012-08-23`/`24`). Kept so vignettes can show both raw `donorid` ingestion and how to link paired pre/post draws. |
 | `collection_date` | `collectiondate` | as recorded, e.g. `June 26 2012` |
 | `batch_id` | derived | `collection_date` as ISO `YYYY-MM-DD`; one date per donor |
 | `sex` | `gender` | `F`, `M`, or NA |

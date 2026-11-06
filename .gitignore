@@ -29,6 +29,13 @@ Rplots.pdf
 __pycache__/
 *.pyc
 
+# Local manuscript drafts and standalone guides not tracked in the repository.
+jss-paper/
+splitGraph_Layperson_Guide.pdf
+splitGraph_in_action_GSE60424.Rmd
+splitGraph_in_action_GSE60424.html
+splitGraph_in_action_GSE60424_files/
+
 # Claude Code's machine-local permission allowlist. A shared `.claude/settings.json`
 # would still be committable; this one is per-machine.
 .claude/settings.local.json

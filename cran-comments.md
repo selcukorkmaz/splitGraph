@@ -1,30 +1,25 @@
-# cran-comments.md — splitGraph 0.4.0
+# cran-comments.md — splitGraph 0.5.0
 
-This is an update of an existing CRAN package (0.3.0, published 2026-07-03).
+This is an update of an existing CRAN package (0.4.0, published 2026-09-18).
 
 ## Resubmission
 
-This is a resubmission. The previous 0.4.0 tarball failed CRAN's incoming
-pre-test with 1 ERROR and 1 NOTE on both r-devel-linux-x86_64-debian-gcc and
-r-devel-windows-x86_64. Both are fixed:
+This is a resubmission of 0.5.0. Previous incoming pre-tests on
+`r-devel-linux-x86_64-debian-gcc` and `r-devel-windows-x86_64` failed with 1
+ERROR in `tests/testthat/test-bioleak-contract.R`:
 
-* **ERROR, `checking tests`** — `test-export.R:37` failed inside igraph's GML
-  writer with "Size of id vector must match vertex count" (`io/gml.c:1057`).
-  `export_graph(format = "gml")` called `igraph::write_graph()` without an `id`
-  argument; on the igraph version present on the check machines, that `NULL`
-  default reaches the C layer as a zero-length vector and is rejected. The
-  writer is now given explicit node ids (`seq_len(vcount)`), which is what it
-  would otherwise have generated and which every igraph version accepts. The
-  test now also asserts one `id` line per node, so a regression cannot pass
-  silently.
+* The first submission (`test-bioleak-contract.R:120`) unconditionally tested
+  extended constraint modes against `bioLeak::as_leaksplits()`, which requires
+  the upcoming `bioLeak` release rather than the CRAN-released `bioLeak 0.3.8`.
+* The second submission (`test-bioleak-contract.R:175`) added a feature guard
+  for `bioLeak 0.3.8`, but in the `else` branch asserted an error regex
+  (`"provide a non-empty 'constraints' list"`) that did not match `bioLeak
+  0.3.8`'s actual error message (`"'primary_axis' must be a list with 'type' and
+  'col' elements."`).
 
-  This did not reproduce locally on igraph 2.2.1, where the same call succeeds.
-
-* **NOTE, invalid file URIs from README.md** — the README linked to
-  `.github/CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` with relative paths. Both
-  files are build-ignored, so the links dangled inside the installed package.
-  They are now absolute GitHub URLs. The only relative link left in README.md
-  is `man/figures/README-plot-1.png`, which does ship in the tarball.
+Both are fixed: `test-bioleak-contract.R` now checks the `bioLeak 0.3.8` branch
+without the mismatched regex and has been verified directly against the
+CRAN-released `bioLeak 0.3.8`.
 
 ## Test environments
 

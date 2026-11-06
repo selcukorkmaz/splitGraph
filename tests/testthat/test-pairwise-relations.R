@@ -201,5 +201,7 @@ test_that("a spatial split_spec survives a JSON round-trip", {
 test_that("plot renders a graph carrying pairwise edges", {
   pairs <- data.frame(id1 = "P1", id2 = "P2", kinship = 0.25, stringsAsFactors = FALSE)
   g <- make_related_graph(pairs)
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
   expect_silent(plot(g))
 })

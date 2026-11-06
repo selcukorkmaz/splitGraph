@@ -60,15 +60,15 @@ are never modified.
 rooted at one of them (a \code{sample_adjacent_to} edge is kept only when
 both samples are kept), the non-sample nodes those edges point to, and,
 transitively, non-sample nodes reachable from kept nodes through
-non-sample edges (\code{assay_uses_platform},
-\code{featureset_generated_from_*}, \code{subject_related_to},
-\code{subject_has_outcome}). \code{timepoint_precedes} edges are kept only
-between retained timepoints, so when \code{time_index} is absent the
-ordering of a subset may become partial; \code{derive_split_constraints(mode
-= "time")} reports that in its warnings. Restricting the graph this way has
-the same semantics as the \code{samples} argument of
-\code{\link{derive_split_constraints}}: structure that only reaches the
-subset through excluded samples is dropped.
+hierarchical non-sample edges (\code{assay_uses_platform},
+\code{featureset_generated_from_*}, \code{subject_has_outcome}).
+\code{timepoint_precedes} and \code{subject_related_to} edges are kept only
+between retained timepoints and subjects, so when \code{time_index} is
+absent the ordering of a subset may become partial;
+\code{derive_split_constraints(mode = "time")} reports that in its warnings.
+Restricting the graph this way has the same semantics as the \code{samples}
+argument of \code{\link{derive_split_constraints}}: structure that only
+reaches the subset through excluded samples is dropped.
 
 \code{combine_graphs()} takes the union of node and edge tables. Identical
 rows are collapsed; a node id or an \code{(from, to, edge_type)} relation

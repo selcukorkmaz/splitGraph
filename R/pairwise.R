@@ -18,28 +18,58 @@
 # relatedness -> sample -> subject edges for in-scope samples plus the
 #                subject_related_to edges (samples of related subjects, and
 #                samples of the same subject, then fall into one component).
-.depgraph_pairwise_component_edges <- function(graph, mode, sample_node_ids) {
+.depgraph_pairwise_component_edges <- function(graph, mode, sample_node_ids, min_weight = NULL, max_distance = NULL) {
   relation <- .depgraph_pairwise_relation[[mode]]
   edge_data <- graph$edges$data
 
   if (identical(mode, "spatial")) {
-    e <- edge_data[
+    if (!is.null(max_distance)) {
+      .depgraph_assert(
+        is.numeric(max_distance) && length(max_distance) == 1L && !is.na(max_distance) && max_distance >= 0,
+        "`max_distance` must be a single non-negative number."
+      )
+    }
+    e_rows <- edge_data[
       edge_data$edge_type == relation &
         edge_data$from %in% sample_node_ids &
         edge_data$to %in% sample_node_ids,
-      c("from", "to"),
+      ,
       drop = FALSE
     ]
+    if (!is.null(max_distance) && nrow(e_rows) > 0L) {
+      dists <- vapply(e_rows$attrs, function(a) {
+        val <- .depgraph_extract_attr(a, "distance")
+        if (is.na(val)) val <- .depgraph_extract_attr(a, "weight")
+        suppressWarnings(as.numeric(as.character(val)))
+      }, numeric(1))
+      e_rows <- e_rows[!is.na(dists) & dists <= max_distance, , drop = FALSE]
+    }
+    e <- e_rows[, c("from", "to"), drop = FALSE]
     row.names(e) <- NULL
     return(e)
   }
 
+  if (!is.null(min_weight)) {
+    .depgraph_assert(
+      is.numeric(min_weight) && length(min_weight) == 1L && !is.na(min_weight),
+      "`min_weight` must be a single numeric value."
+    )
+  }
   belongs <- edge_data[
     edge_data$edge_type == "sample_belongs_to_subject" & edge_data$from %in% sample_node_ids,
     c("from", "to"),
     drop = FALSE
   ]
-  related <- edge_data[edge_data$edge_type == relation, c("from", "to"), drop = FALSE]
+  rel_rows <- edge_data[edge_data$edge_type == relation, , drop = FALSE]
+  if (!is.null(min_weight) && nrow(rel_rows) > 0L) {
+    weights <- vapply(rel_rows$attrs, function(a) {
+      val <- .depgraph_extract_attr(a, "kinship")
+      if (is.na(val)) val <- .depgraph_extract_attr(a, "weight")
+      suppressWarnings(as.numeric(as.character(val)))
+    }, numeric(1))
+    rel_rows <- rel_rows[!is.na(weights) & weights >= min_weight, , drop = FALSE]
+  }
+  related <- rel_rows[, c("from", "to"), drop = FALSE]
   # Keep only relatedness edges whose BOTH subjects carry in-scope samples. A
   # subject with no in-scope samples must not act as a bridge (P1 ~ P2 ~ P3 with
   # P2 sample-less does not group P1's and P3's samples), matching the pairwise
@@ -50,12 +80,27 @@
   e
 }
 
-.derive_pairwise_constraints <- function(graph, mode, samples = NULL) {
+.derive_pairwise_constraints <- function(graph, mode, samples = NULL, min_weight = NULL, max_distance = NULL) {
   relation <- .depgraph_pairwise_relation[[mode]]
   sample_nodes <- .depgraph_constraint_samples(graph, samples)
   keep_ids <- sample_nodes$node_id
 
-  component_edges <- .depgraph_pairwise_component_edges(graph, mode, keep_ids)
+  if (identical(mode, "relatedness") && !is.null(min_weight)) {
+    .depgraph_assert(
+      is.numeric(min_weight) && length(min_weight) == 1L && !is.na(min_weight),
+      "`min_weight` must be a single numeric value."
+    )
+  }
+  if (identical(mode, "spatial") && !is.null(max_distance)) {
+    .depgraph_assert(
+      is.numeric(max_distance) && length(max_distance) == 1L && !is.na(max_distance) && max_distance >= 0,
+      "`max_distance` must be a single non-negative number."
+    )
+  }
+
+  component_edges <- .depgraph_pairwise_component_edges(
+    graph, mode, keep_ids, min_weight = min_weight, max_distance = max_distance
+  )
   comps <- .depgraph_sample_components(keep_ids, component_edges)
   membership_idx <- comps$membership
   component_size <- comps$size
@@ -95,6 +140,21 @@
     ))
   }
 
+  active_threshold <- if (identical(mode, "relatedness") && !is.null(min_weight)) {
+    as.numeric(min_weight)
+  } else if (identical(mode, "spatial") && !is.null(max_distance)) {
+    as.numeric(max_distance)
+  } else {
+    as.numeric(graph$metadata$edge_sources[[relation]]$threshold %||% NA_real_)
+  }
+  active_metric <- if (identical(mode, "relatedness") && !is.null(min_weight)) {
+    "kinship"
+  } else if (identical(mode, "spatial") && !is.null(max_distance)) {
+    "distance"
+  } else {
+    as.character(graph$metadata$edge_sources[[relation]]$metric %||% NA_character_)
+  }
+
   split_constraint(
     strategy = mode,
     sample_map = sample_map,
@@ -111,8 +171,8 @@
       n_groups = length(unique(sample_map$group_id)),
       n_samples = nrow(sample_map),
       n_dependency_edges = nrow(component_edges),
-      threshold = as.numeric(graph$metadata$edge_sources[[relation]]$threshold %||% NA_real_),
-      threshold_metric = as.character(graph$metadata$edge_sources[[relation]]$metric %||% NA_character_),
+      threshold = active_threshold,
+      threshold_metric = active_metric,
       warnings = warnings
     )
   )

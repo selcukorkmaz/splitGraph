@@ -390,7 +390,7 @@ citation("splitGraph")
 produces:
 
 > Korkmaz S (2026). *splitGraph: Dataset Dependency Graphs for
-> Leakage-Aware Evaluation*. R package version 0.4.0.
+> Leakage-Aware Evaluation*. R package version 0.5.0.
 > <https://github.com/selcukorkmaz/splitGraph>
 
 ## Contributing

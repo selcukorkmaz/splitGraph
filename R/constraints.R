@@ -255,16 +255,28 @@
     )
     if (igraph::is_dag(precedence_graph)) {
       topo <- igraph::as_ids(igraph::topo_sort(precedence_graph, mode = "out"))
-      order_rank[topo] <- seq_along(topo)
-      return(list(
-        source = "timepoint_precedes",
-        time_index = raw_time_index,
-        order_rank = order_rank,
-        warnings = warnings
-      ))
+      edge_keys <- paste(precedence_edges$from, precedence_edges$to, sep = "\r")
+      consec_keys <- if (length(topo) >= 2L) {
+        paste(topo[-length(topo)], topo[-1L], sep = "\r")
+      } else {
+        character()
+      }
+      if (length(topo) <= 1L || all(consec_keys %in% edge_keys)) {
+        order_rank[topo] <- seq_along(topo)
+        return(list(
+          source = "timepoint_precedes",
+          time_index = raw_time_index,
+          order_rank = order_rank,
+          warnings = warnings
+        ))
+      }
+      warnings <- c(
+        warnings,
+        "Timepoint precedence edges define only a partial ordering; `order_rank` could not be uniquely determined for all timepoints."
+      )
+    } else {
+      warnings <- c(warnings, "Timepoint precedence edges are cyclic; ordering metadata could not be derived from graph structure.")
     }
-
-    warnings <- c(warnings, "Timepoint precedence edges are cyclic; ordering metadata could not be derived from graph structure.")
   }
 
   if (any(!is.na(raw_time_index))) {
@@ -272,7 +284,7 @@
     rank_map <- stats::setNames(seq_along(available), as.character(available))
     order_rank[!is.na(raw_time_index)] <- as.integer(rank_map[as.character(raw_time_index[!is.na(raw_time_index)])])
     warnings <- c(warnings, "Time ordering is only partially available because some timepoints are missing `time_index` values.")
-  } else {
+  } else if (nrow(precedence_edges) == 0L) {
     warnings <- c(warnings, "Time ordering is unavailable because neither `time_index` metadata nor usable `timepoint_precedes` edges were found.")
   }
 
@@ -544,7 +556,7 @@
   }, character(1), USE.NAMES = FALSE)
 }
 
-.derive_composite_strict_constraints <- function(graph, samples = NULL, via = NULL) {
+.derive_composite_strict_constraints <- function(graph, samples = NULL, via = NULL, min_weight = NULL, max_distance = NULL) {
   via_modes <- .depgraph_normalize_via_modes(via)
   direct_modes <- via_modes[!.depgraph_is_pairwise_mode(via_modes)]
   pairwise_modes <- via_modes[.depgraph_is_pairwise_mode(via_modes)]
@@ -562,7 +574,10 @@
   keep_ids <- sample_nodes$node_id
   dep_edges <- .depgraph_dependency_edges(graph, keep_ids, unname(.depgraph_constraint_edge_map[direct_modes]))[, c("from", "to"), drop = FALSE]
   for (mode in pairwise_modes) {
-    dep_edges <- rbind(dep_edges, .depgraph_pairwise_component_edges(graph, mode, keep_ids))
+    dep_edges <- rbind(
+      dep_edges,
+      .depgraph_pairwise_component_edges(graph, mode, keep_ids, min_weight = min_weight, max_distance = max_distance)
+    )
   }
   comps <- .depgraph_sample_components(keep_ids, dep_edges)
 
@@ -609,7 +624,7 @@
   )
 }
 
-.derive_rule_based_constraints <- function(graph, samples = NULL, priority = NULL, via = NULL) {
+.derive_rule_based_constraints <- function(graph, samples = NULL, priority = NULL, via = NULL, min_weight = NULL, max_distance = NULL) {
   via_modes <- .depgraph_normalize_via_modes(via)
   priority <- if (is.null(priority)) via_modes else .depgraph_normalize_constraint_modes(priority)
   .depgraph_assert(all(priority %in% via_modes), "`priority` must be a subset of the selected composite dependency sources.")
@@ -624,7 +639,9 @@
   # assignment" so the sample falls through to the next mode in priority.
   keys <- lapply(priority, function(mode) {
     if (.depgraph_is_pairwise_mode(mode)) {
-      pairwise <- .derive_pairwise_constraints(graph, mode, samples = sample_ids)$sample_map
+      pairwise <- .derive_pairwise_constraints(
+        graph, mode, samples = sample_ids, min_weight = min_weight, max_distance = max_distance
+      )$sample_map
       idx <- match(sample_ids, pairwise$sample_node_id)
       group_size <- table(pairwise$group_id)[pairwise$group_id[idx]]
       key <- pairwise$group_label[idx]
@@ -818,6 +835,17 @@
 #'   next mode. Defaults to \code{c("subject", "batch", "study", "time")}.
 #' @param priority Optional priority order used for
 #'   \code{strategy = "rule_based"}.
+#' @param time_ordering If \code{TRUE}, attach temporal ordering metadata
+#'   (\code{timepoint_id}, \code{time_index}, \code{order_rank}) and set
+#'   \code{ordering_required = TRUE} (when complete) alongside any grouping
+#'   mode (e.g. longitudinal \code{mode = "subject"} or \code{"composite"}
+#'   without collapsing samples at the same visit into a single group).
+#' @param min_weight Optional numeric minimum weight/kinship threshold applied
+#'   to \code{subject_related_to} edges when \code{mode = "relatedness"} or
+#'   \code{mode = "composite"}.
+#' @param max_distance Optional numeric maximum distance threshold applied to
+#'   \code{sample_adjacent_to} edges when \code{mode = "spatial"} or
+#'   \code{mode = "composite"}.
 #' @param include_warnings Whether to retain human-readable warnings in the
 #'   returned metadata.
 #' @param x A \code{split_constraint}.
@@ -843,12 +871,23 @@ derive_split_constraints <- function(graph,
                                      strategy = c("strict", "rule_based"),
                                      via = NULL,
                                      priority = NULL,
+                                     time_ordering = FALSE,
+                                     min_weight = NULL,
+                                     max_distance = NULL,
                                      include_warnings = TRUE) {
   .depgraph_assert(inherits(graph, "dependency_graph"), "`graph` must be a `dependency_graph`.")
   mode <- .depgraph_normalize_constraint_mode(
     .depgraph_match_arg(mode, .depgraph_constraint_modes, "mode")
   )
   strategy <- .depgraph_match_arg(strategy, c("strict", "rule_based"), "strategy")
+
+  if (isTRUE(time_ordering) && identical(mode, "composite") && identical(strategy, "strict")) {
+    norm_via <- .depgraph_normalize_via_modes(via)
+    non_time_via <- setdiff(norm_via, "time")
+    if (length(non_time_via) > 0L) {
+      via <- non_time_via
+    }
+  }
 
   result <- switch(
     mode,
@@ -860,14 +899,28 @@ derive_split_constraints <- function(graph,
     region = .derive_region_constraints(graph, samples = samples),
     platform = .derive_platform_constraints(graph, samples = samples),
     assay = .derive_assay_constraints(graph, samples = samples),
-    relatedness = .derive_pairwise_constraints(graph, "relatedness", samples = samples),
-    spatial = .derive_pairwise_constraints(graph, "spatial", samples = samples),
+    relatedness = .derive_pairwise_constraints(graph, "relatedness", samples = samples, min_weight = min_weight),
+    spatial = .derive_pairwise_constraints(graph, "spatial", samples = samples, max_distance = max_distance),
     composite = if (identical(strategy, "strict")) {
-      .derive_composite_strict_constraints(graph, samples = samples, via = via)
+      .derive_composite_strict_constraints(graph, samples = samples, via = via, min_weight = min_weight, max_distance = max_distance)
     } else {
-      .derive_rule_based_constraints(graph, samples = samples, priority = priority, via = via)
+      .derive_rule_based_constraints(graph, samples = samples, priority = priority, via = via, min_weight = min_weight, max_distance = max_distance)
     }
   )
+
+  if (isTRUE(time_ordering) && !identical(mode, "time")) {
+    t_con <- .derive_time_constraints(graph, samples = samples)
+    t_idx <- match(result$sample_map$sample_node_id, t_con$sample_map$sample_node_id)
+    result$sample_map$time_index <- t_con$sample_map$time_index[t_idx]
+    result$sample_map$timepoint_id <- t_con$sample_map$timepoint_id[t_idx]
+    result$sample_map$order_rank <- as.integer(t_con$sample_map$order_rank[t_idx])
+    has_complete <- nrow(result$sample_map) > 0L && all(!is.na(result$sample_map$order_rank))
+    result$recommended_downstream_args$time_var <- if (any(!is.na(result$sample_map$order_rank))) "order_rank" else NULL
+    result$recommended_downstream_args$ordering_required <- has_complete
+    result$metadata$time_order_source <- t_con$metadata$time_order_source
+    result$metadata$relations_used <- unique(c(result$metadata$relations_used, t_con$metadata$relations_used))
+    result$metadata$warnings <- unique(c(result$metadata$warnings, t_con$metadata$warnings))
+  }
 
   if (!isTRUE(include_warnings)) {
     result$metadata$warnings <- character()

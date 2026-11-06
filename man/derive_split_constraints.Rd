@@ -13,6 +13,9 @@ derive_split_constraints(
   strategy = c("strict", "rule_based"),
   via = NULL,
   priority = NULL,
+  time_ordering = FALSE,
+  min_weight = NULL,
+  max_distance = NULL,
   include_warnings = TRUE
 )
 
@@ -44,6 +47,20 @@ next mode. Defaults to \code{c("subject", "batch", "study", "time")}.}
 
 \item{priority}{Optional priority order used for
 \code{strategy = "rule_based"}.}
+
+\item{time_ordering}{If \code{TRUE}, attach temporal ordering metadata
+(\code{timepoint_id}, \code{time_index}, \code{order_rank}) and set
+\code{ordering_required = TRUE} (when complete) alongside any grouping
+mode (e.g. longitudinal \code{mode = "subject"} or \code{"composite"}
+without collapsing samples at the same visit into a single group).}
+
+\item{min_weight}{Optional numeric minimum weight/kinship threshold applied
+to \code{subject_related_to} edges when \code{mode = "relatedness"} or
+\code{mode = "composite"}.}
+
+\item{max_distance}{Optional numeric maximum distance threshold applied to
+\code{sample_adjacent_to} edges when \code{mode = "spatial"} or
+\code{mode = "composite"}.}
 
 \item{include_warnings}{Whether to retain human-readable warnings in the
 returned metadata.}

@@ -11,7 +11,13 @@ vignette: >
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
-library(splitGraph)
+package_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("pkgload", quietly = TRUE) &&
+    file.exists(file.path(package_root, "DESCRIPTION"))) {
+  pkgload::load_all(package_root, export_all = FALSE, helpers = FALSE, quiet = TRUE)
+} else {
+  library(splitGraph)
+}
 ```
 
 The other vignettes use small synthetic tables. This one walks through a real
@@ -50,14 +56,22 @@ all(tapply(gse$condition, gse$subject_id, function(x) length(unique(x))) == 1)
 ```
 
 One caveat about the labels: GEO records multiple sclerosis samples as
-"pretreatment" or "posttreatment", but these come from *different* donors
-(three each), not from the same individuals over time. There is therefore no
-repeated-measure time axis in this cohort, and we deliberately do **not** model
-the labels as timepoints; they stay inside `disease_status`.
+"pretreatment" or "posttreatment" under six distinct `donorid` values (`D31`,
+`D45`, `D55` for `pre_treatment` and `D33`, `D46`, `D56` for `post_treatment`).
+Under the raw `subject_id` column, each draw ID appears at only one label:
 
 ```{r no-longitudinal}
 with(gse[gse$condition == "MS", ], table(subject_id, timepoint_id))
 ```
+
+However, the GEO study protocol states that blood was drawn from MS patients
+before and 24 hours after their first interferon-beta treatment, and the
+collection dates (`2012-05-21`/`22` for `D31`/`D33`, `2012-06-28`/`29` for
+`D45`/`D46`, and `2012-08-23`/`24` for `D55`/`D56`) and sex (`F`) are consistent
+with three putative pre/post patient pairs. Below we first build the graph from
+the as-recorded `subject_id` column (20 draw IDs) and then show how mapping
+those putative pairs (or linking them with must-link edges) yields 17 putative
+patient groups.
 
 ## Build the graph
 
@@ -208,10 +222,73 @@ ruled$metadata$n_groups
 head(as.data.frame(ruled)[, c("sample_id", "group_id", "constraint_type")], 3)
 ```
 
+### Feasibility comparison and bridge diagnostics
+
+Instead of checking each mode by hand, `compare_split_constraints()` evaluates
+all candidate modes side by side. Notice `min_stratum_groups = 3`: because the
+smallest disease strata (`ALS` and `Sepsis`) contain only 3 donors each, a
+5-fold donor-grouped split (`k = 5`) cannot place every disease class into every
+test fold, even though 20 total donors satisfy `k_fold_feasible = TRUE` for
+unstratified 5-fold grouping. For multi-class stratified evaluation across all
+five conditions, `k = 3L` (3-fold CV) is the maximum fold count that guarantees
+at least one donor per disease class in every fold:
+
+```{r feasibility}
+cmp <- compare_split_constraints(g, k = 3L)
+cmp
+```
+
+Both `subject` and `batch` report `n_risks_severed = 20` because collection date
+is nested 1-to-1 within donor on this cohort (so grouping by `batch` empirically
+keeps every donor's samples together, even though `batch` mode does not
+semantically enforce subject separation in general cohorts). Meanwhile,
+`composite` (`strategy = "strict"`) collapses all 134 samples into `n_groups = 1`
+(`k_fold_feasible = FALSE`), which cannot form a train/test split and therefore
+reports `n_risks_severed = 0`.
+
+To also prevent the three putative pre/post MS patient pairs (`D31`/`D33`,
+`D45`/`D46`, `D55`/`D56`) from straddling folds without re-importing `g`, we can
+add synthetic must-link edges via `relatedness_edges_from_kinship()` (using
+`0.5`, the theoretical self/duplicate kinship value on the KING scale, as a
+must-link weight rather than an empirical genotype estimate), yielding 17
+putative patient groups with `min_stratum_groups = 3`:
+
+```{r ms-paired}
+ms_pairs <- data.frame(
+  id1 = c("D31", "D45", "D55"),
+  id2 = c("D33", "D46", "D56"),
+  kinship = c(0.5, 0.5, 0.5),
+  stringsAsFactors = FALSE
+)
+g_paired <- add_edges(
+  g,
+  relatedness_edges_from_kinship(ms_pairs, threshold = 0.25)
+)
+compare_split_constraints(g_paired, modes = c("subject", "relatedness"), k = 3L)
+```
+
+When a composite derivation over-merges, `find_dependency_bridges()` ranks the
+non-sample entities by how many connected components would be gained (or how
+much the largest component would shrink) if each entity were removed:
+
+```{r bridges}
+bridges <- find_dependency_bridges(g, via = c("Subject", "Region"), top_n = 7L)
+as.data.frame(bridges)[, c("node_id", "node_type", "n_samples_linked",
+                           "n_components_before", "n_components_without",
+                           "is_bridge")]
+```
+
+Every `Region` node links 14 to 20 samples across donors; removing any single
+cell population still leaves the other six cell populations chaining all 20
+donors into a single component (`n_components_without = 1`), confirming that
+`Region` is a cohort-wide cross-cutting factor rather than a single-node bridge.
+
 ## The split_spec
 
 Grouping by subject is the right primary constraint here; batch and region
-travel as blocking annotations and the disease status as the stratum.
+travel as blocking annotations and the disease status as the stratum (the
+default `stratify_by = "outcome"`; pass `stratify_by = "region"` or `"none"` to
+populate `stratum` from a blocking axis or omit it).
 
 ```{r spec}
 spec <- as_split_spec(by_subject, graph = g)
